@@ -504,6 +504,10 @@ re.on_frame(function()
                     fl._joint = nil
                     pcall(find_flashlight_joint, char)
                 end
+
+                -- 确保在 UI 上实时看到武器检测状态
+                char.status = string.format("Active | weapon: %s | writes: %d",
+                    char._detected_weapon or "None", char.write_count)
             else
                 char.status = "Not in scene"
             end
@@ -512,10 +516,9 @@ re.on_frame(function()
         end
     end
 end)
-
 ------------------------------------------------------
 -- LateUpdateBehavior (Pre)
--- 尝试更换钩子时机，提前介入骨骼系统，观察能否被引擎内部过滤杠杆抖动
+-- 重新切回此钩子：用户确认该时机能被引擎动画系统平滑处理，极大缓解换弹抖动。
 ------------------------------------------------------
 re.on_pre_application_entry("LateUpdateBehavior", function()
     for _, char in ipairs(characters) do
@@ -597,32 +600,41 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
                 end
             end
 
-            -- 手电筒
+            if written then char.write_count = char.write_count + 1 end
+        end
+    end
+end)
+
+------------------------------------------------------
+-- PrepareRendering (Pre)
+-- 专门用于手电筒对齐，在所有动画和位移算完后的渲染前最后一刻执行，确保精度。
+------------------------------------------------------
+re.on_pre_application_entry("PrepareRendering", function()
+    for _, char in ipairs(characters) do
+        if char.enabled and char._transform then
             local fl = char.flashlight
             if joint_ok(fl._joint) then
                 local l_wep = nil
                 for _, j in ipairs(char.joints) do
                     if j.name == "L_Wep" then l_wep = j._joint; break end
                 end
+                
                 if joint_ok(l_wep) then
                     local wpos, wrot = nil, nil
                     pcall(function() wpos = l_wep:call("get_Position"); wrot = l_wep:call("get_Rotation") end)
                     if wpos and wrot then
-                        local ok = pcall(function()
+                        pcall(function()
                             fl._joint:call("set_Position", wpos)
                             fl._joint:call("set_Rotation", wrot)
                         end)
-                        if ok then fl.status = "Anchored to L_Wep"; written = true
-                        else fl.status = "Failed to parent" end
+                        fl.status = string.format("Anchored | weapon: %s", char._detected_weapon or "None")
                     end
-                else fl.status = "Waiting for L_Wep..." end
+                else
+                    fl.status = "Waiting for L_Wep..."
+                end
             else
                 fl._joint = nil
             end
-
-            if written then char.write_count = char.write_count + 1 end
-            char.status = string.format("Active | weapon: %s | writes: %d",
-                char._detected_weapon or "None", char.write_count)
         end
     end
 end)
