@@ -275,7 +275,14 @@ local characters = {
             },
         },
         default_kill_conditions = {
-            { { layer = 5, bank = 0, _invert = true } },  -- 手电筒 flashlight
+            { 
+              { layer = 5, bank = 0, _invert = true },
+              { layer = 5, bank = 100, mot = 1220, _invert = true },
+              { layer = 5, bank = 100, mot = 1221, _invert = true },
+              { layer = 5, bank = 100, mot = 1231, _invert = true },
+              { layer = 5, bank = 100, mot = 1232, _invert = true },
+              { layer = 5, bank = 100, mot = 1233, _invert = true }
+            },  -- 手电筒 flashlight
             { { layer = 5, mot = 6102 } },                 -- 治疗针/切武器 syringe/switch weapon
             { { layer = 3, bank = 0, mot = "invalid" } },   -- 过场动画 cutscene
             { { layer = 0, bank = 10, mot = 22} }, -- 面对敌人时冲刺 run for enemy
@@ -329,24 +336,15 @@ local characters = {
 local last_layer_check = -999
 local prev_enabled = true
 
-------------------------------------------------------
--- Normalise conditions (legacy support)
-------------------------------------------------------
-local function normalise_conditions(raw)
-    if not raw then return nil end
-    local out = {}
-    for _, item in ipairs(raw) do
-        if item.checks then
-            table.insert(out, item)
-        else
-            table.insert(out, { checks = item })
-        end
-    end
-    return out
-end
+local TYPE_ACB = sdk.find_type_definition("anim.AnimationControllerBehavior")
+local FIELD_AC = TYPE_ACB and TYPE_ACB:get_field("AnimationController")
+local TYPE_AC  = sdk.find_type_definition("anim.AnimationController")
+local FIELD_AB = TYPE_AC  and TYPE_AC:get_field("AnimationBases")
+local TYPE_LHAND = sdk.find_type_definition("anim.AnimLHandAdjustIK")
+local FIELD_MBR = TYPE_LHAND and TYPE_LHAND:get_field("MulBlendRate")
 
 ------------------------------------------------------
--- JSON config
+-- JSON config (Only saves scalar settings and weights)
 ------------------------------------------------------
 local function load_char_config(char)
     local filename = CONFIG_DIR .. "hand_ik_fix_" .. char.name .. ".json"
@@ -356,22 +354,16 @@ local function load_char_config(char)
         if data.distance_threshold ~= nil then char.distance_threshold = data.distance_threshold end
         if data.distance_interval ~= nil then char.distance_interval = data.distance_interval end
         if data.distance_sustain ~= nil then char.distance_sustain = data.distance_sustain end
-        if data.conditions ~= nil then char.conditions = normalise_conditions(data.conditions) end
-        if data.kill_conditions ~= nil then char.kill_conditions = data.kill_conditions end
         if data.weapon_distance_thresholds ~= nil then
-            -- 先从 defaults 建表（若还未初始化）
             if not char.weapon_distance_thresholds and char.default_weapon_distance_thresholds then
                 char.weapon_distance_thresholds = {}
                 for k, v in pairs(char.default_weapon_distance_thresholds) do
                     char.weapon_distance_thresholds[k] = v
                 end
             end
-            -- 再用 JSON 里的值覆盖
             if char.weapon_distance_thresholds then
                 for k, v in pairs(data.weapon_distance_thresholds) do
-                    if type(v) == "number" then
-                        char.weapon_distance_thresholds[k] = v
-                    end
+                    if type(v) == "number" then char.weapon_distance_thresholds[k] = v end
                 end
             end
         end
@@ -384,48 +376,38 @@ local function load_char_config(char)
             end
             if char.weapon_ik_weights then
                 for k, v in pairs(data.weapon_ik_weights) do
-                    if type(v) == "number" then
-                        char.weapon_ik_weights[k] = v
-                    end
+                    if type(v) == "number" then char.weapon_ik_weights[k] = v end
                 end
             end
         end
         char.config_source = filename
-        log.info(string.format("[IK Fix] Config loaded for %s from %s", char.name, filename))
     else
         char.char_enabled = char.default_char_enabled
         char.distance_threshold = char.default_distance_threshold
         char.distance_interval = char.default_distance_interval
         char.distance_sustain = char.default_distance_sustain
-        char.conditions = char.default_conditions
-        char.kill_conditions = char.default_kill_conditions
         if char.default_weapon_distance_thresholds then
             char.weapon_distance_thresholds = {}
-            for k, v in pairs(char.default_weapon_distance_thresholds) do
-                char.weapon_distance_thresholds[k] = v
-            end
+            for k, v in pairs(char.default_weapon_distance_thresholds) do char.weapon_distance_thresholds[k] = v end
         end
         if char.default_weapon_ik_weights then
             char.weapon_ik_weights = {}
-            for k, v in pairs(char.default_weapon_ik_weights) do
-                char.weapon_ik_weights[k] = v
-            end
+            for k, v in pairs(char.default_weapon_ik_weights) do char.weapon_ik_weights[k] = v end
         end
         char.config_source = "default"
     end
-    if not char.conditions then char.conditions = char.default_conditions end
-    if not char.kill_conditions then char.kill_conditions = char.default_kill_conditions end
+    
+    -- ALWAYS use conditions directly from Lua definitions
+    char.conditions = char.default_conditions
+    char.kill_conditions = char.default_kill_conditions
+    
     if not char.weapon_distance_thresholds and char.default_weapon_distance_thresholds then
         char.weapon_distance_thresholds = {}
-        for k, v in pairs(char.default_weapon_distance_thresholds) do
-            char.weapon_distance_thresholds[k] = v
-        end
+        for k, v in pairs(char.default_weapon_distance_thresholds) do char.weapon_distance_thresholds[k] = v end
     end
     if not char.weapon_ik_weights and char.default_weapon_ik_weights then
         char.weapon_ik_weights = {}
-        for k, v in pairs(char.default_weapon_ik_weights) do
-            char.weapon_ik_weights[k] = v
-        end
+        for k, v in pairs(char.default_weapon_ik_weights) do char.weapon_ik_weights[k] = v end
     end
 end
 
@@ -437,35 +419,27 @@ local function save_char_config(char)
         distance_interval = char.distance_interval,
         distance_sustain = char.distance_sustain,
         weapon_distance_thresholds = char.weapon_distance_thresholds,
-        weapon_ik_weights = char.weapon_ik_weights,
-        conditions = char.conditions,
-        kill_conditions = char.kill_conditions,
+        weapon_ik_weights = char.weapon_ik_weights
     })
     char.config_source = filename
 end
 
-for _, char in ipairs(characters) do
-    load_char_config(char)
-end
+for _, char in ipairs(characters) do load_char_config(char) end
 
 ------------------------------------------------------
 -- Core: IK item finder
 ------------------------------------------------------
 local function find_ik_item(char, go)
-    if char._ik_item then
-        -- Verify validity of cached managed object via quick access
-        local ok = pcall(function() return char._ik_item:get_address() end)
-        if ok then return char._ik_item end
-        char._ik_item = nil
-    end
-
-    local acb = go:call("getComponent(System.Type)",
-        sdk.typeof("anim.AnimationControllerBehavior"))
+    if not TYPE_ACB or not FIELD_AC or not FIELD_AB or not TYPE_LHAND then return nil end
+    local acb = go:call("getComponent(System.Type)", sdk.typeof("anim.AnimationControllerBehavior"))
     if not acb then return nil end
-    local ac = acb:get_type_definition():get_field("AnimationController"):get_data(acb)
-    if not ac then return nil end
-    local ab = ac:get_type_definition():get_field("AnimationBases"):get_data(ac)
-    if not ab then return nil end
+    
+    local ok_ac, ac = pcall(function() return FIELD_AC:get_data(acb) end)
+    if not ok_ac or not ac then return nil end
+    
+    local ok_ab, ab = pcall(function() return FIELD_AB:get_data(ac) end)
+    if not ok_ab or not ab then return nil end
+    
     local ok, count = pcall(ab.call, ab, "get_Count")
     if not ok or not count then return nil end
     for i = 0, count - 1 do
@@ -473,7 +447,7 @@ local function find_ik_item(char, go)
         if ok_i and item then
             local ok_t, td = pcall(item.get_type_definition, item)
             if ok_t and td and td:get_full_name() == "anim.AnimLHandAdjustIK" then
-                char._ik_item = item
+                char._ik_item = item  -- store for UI display reference if needed
                 return item
             end
         end
@@ -513,7 +487,6 @@ local function match_check(ld, check)
     if check.bank ~= nil and ld.bank ~= check.bank then match = false end
     if check.mot ~= nil then
         if check.mot == "invalid" then
-            -- Special value: check if mot is invalid (>= 0x7FFFFFFF or game returns the maximum value)
             match = (ld.mot >= 2147483647)
         elseif ld.mot ~= check.mot then
             match = false
@@ -556,7 +529,6 @@ local function match_conditions(layers, conditions, char)
             end
         end
         if group_match then
-            -- 武器白名单过滤：weapons = {"Shotgun", ...} 只在这些武器时生效（"None" 表示无武器）
             if group.weapons then
                 local weapon = char and get_current_weapon(char)
                 local found = false
@@ -565,7 +537,6 @@ local function match_conditions(layers, conditions, char)
                 end
                 if not found then group_match = false end
             end
-            -- 武器黑名单过滤：weapons_exclude = {"Pistol", ...} 排除这些武器（"None" 表示无武器）
             if group_match and group.weapons_exclude then
                 local weapon = char and get_current_weapon(char)
                 for _, w in ipairs(group.weapons_exclude) do
@@ -579,10 +550,9 @@ local function match_conditions(layers, conditions, char)
 end
 
 ------------------------------------------------------
--- Core: Built-in weapon detection (reads DrawSelf only, no writes)
+-- Core: Built-in weapon detection
 ------------------------------------------------------
 local WEAPON_DETECT_INTERVAL = 0.5
-
 local function update_detected_weapon(char)
     if not char.arm_weapon_map then return end
     local now = os.clock()
@@ -592,7 +562,6 @@ local function update_detected_weapon(char)
     local t = char._transform
     if not t then return end
 
-    -- Build or validate arm cache
     if not char._arm_cache then
         local arms = {}
         local ok, child = pcall(function() return t:call("get_Child") end)
@@ -643,9 +612,7 @@ end
 ------------------------------------------------------
 local function get_active_threshold(char)
     if char.weapon_distance_thresholds then
-        local weapon = (WeaponPoseFix and WeaponPoseFix.active_weapon and WeaponPoseFix.active_weapon[char.name])
-                    or char._detected_weapon
-                    or char._last_weapon
+        local weapon = get_current_weapon(char)
         if weapon and char.weapon_distance_thresholds[weapon] ~= nil then
             return char.weapon_distance_thresholds[weapon]
         end
@@ -660,7 +627,6 @@ local function ensure_transform(char, go)
     if char._go_ref and char._go_ref ~= go then
         char._transform = nil; char._joints = {}; char._dist_cache = {}; char._ik_item = nil
         char._arm_cache = nil; char._detected_weapon = nil
-        char._mul_blend_rate = nil
     end
     char._go_ref = go
     if char._transform then
@@ -728,19 +694,10 @@ local function get_active_ik_weight(char)
 end
 
 local function get_mul_blend_rate(char, item)
-    if char._mul_blend_rate then
-        local ok = pcall(char._mul_blend_rate.get_address, char._mul_blend_rate)
-        if ok then return char._mul_blend_rate end
-        char._mul_blend_rate = nil
-    end
-    local ok, td = pcall(item.get_type_definition, item)
-    if not ok or not td then return nil end
-    local f = td:get_field("MulBlendRate")
-    if not f then return nil end
-    local ok2, mbr = pcall(f.get_data, f, item)
-    if not ok2 or not mbr then return nil end
-    char._mul_blend_rate = mbr
-    return mbr
+    if not FIELD_MBR then return nil end
+    local ok, mbr = pcall(function() return FIELD_MBR:get_data(item) end)
+    if ok and mbr then return mbr end
+    return nil
 end
 
 local OFFSET_TARGET_BLEND_RATE = 0x10  -- TargetBlendRate in anim.BlendParam
