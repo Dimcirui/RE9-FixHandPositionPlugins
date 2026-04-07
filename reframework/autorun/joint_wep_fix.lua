@@ -141,24 +141,39 @@ local function update_weapon(char)
     char._weapon_check_time = os.clock()
     local t = char._transform
     if not t then return end
+    
     local detected = nil
     pcall(function()
+        -- 1. 先读取能显示的武器
+        local visible_arms = {}
         local child = t:call("get_Child")
         while child do
             local cgo = child:call("get_GameObject")
             if cgo and cgo:call("get_Name"):sub(1,3) == "arm" then
-                for _, rule in ipairs(char.arm_weapon_map) do
-                    if cgo:call("get_Name"):sub(1,#rule.prefix) == rule.prefix then
-                        if cgo:call("get_DrawSelf") then
-                            local pos = child:call("get_LocalPosition")
-                            if pos and math.abs(pos.x) < IN_HAND_THRESHOLD then detected = rule.label end
-                        end
-                        break
-                    end
+                if cgo:call("get_DrawSelf") then
+                    table.insert(visible_arms, { child = child, name = cgo:call("get_Name") })
                 end
             end
-            if detected then break end
             child = child:call("get_Next")
+        end
+        
+        -- 2. 然后再去判定武器的距离
+        for _, arm_info in ipairs(visible_arms) do
+            local pos = arm_info.child:call("get_LocalPosition")
+            if pos then
+                local in_hand = math.abs(pos.x) < IN_HAND_THRESHOLD and
+                                math.abs(pos.y) < IN_HAND_THRESHOLD and
+                                math.abs(pos.z) < IN_HAND_THRESHOLD
+                if in_hand then
+                    for _, rule in ipairs(char.arm_weapon_map) do
+                        if arm_info.name:sub(1, #rule.prefix) == rule.prefix then
+                            detected = rule.label
+                            break
+                        end
+                    end
+                    if detected then break end
+                end
+            end
         end
     end)
     char._detected_weapon = detected
