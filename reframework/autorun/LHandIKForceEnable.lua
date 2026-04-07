@@ -144,7 +144,12 @@ local characters = {
             },
         },
         default_kill_conditions = {
-            { { layer = 5, bank = 0, _invert = true } },  -- 手电筒 flashlight
+            { { layer = 5, bank = 0, _invert = true },
+              { layer = 5, bank = 100, mot = 1220, _invert = true },
+              { layer = 5, bank = 100, mot = 1221, _invert = true },
+              { layer = 5, bank = 100, mot = 1231, _invert = true },
+              { layer = 5, bank = 100, mot = 1232, _invert = true },
+              { layer = 5, bank = 100, mot = 1233, _invert = true } },  -- 手电筒 flashlight
             { { layer = 5, mot = 6102 } },                 -- 治疗针/切武器 syringe/switch weapon
             { { layer = 3, bank = 0, mot = "invalid" } },  -- 过场动画 cutscene
             { { layer = 3, bank = 0, mot = 6201 } },        -- 手持背包 backpack
@@ -189,21 +194,6 @@ local characters = {
             --     },
             --     weapons = { "Pistol", "Magnum" },
             -- },
-
-            {
-                -- 手枪持握状态 (L3.bank=10: 包含站立/走/跑/瞄准及过渡帧)
-                -- Gun holding (L3.bank=10: covers idle/walk/run/aim and transition frames)
-                -- 排除非持枪状态 (L3.bank=10, mot=5000)
-                -- Exclude non-gun holding state (L3.bank=10, mot=5000)
-                -- 排除手枪/马格南（距离阈值接近0，由 weapon_distance_thresholds 控制）
-                -- checks = {
-                --     { layer = 3, bank = 10 },
-                --     -- { layer = 0, bank = 10, mot = 22, _invert = true },
-                --     -- { layer = 4, bank = 10, mot = 5011, _invert = true },
-                -- },
-                distance_check = true,
-                weapons = { "Pistol", "Magnum" },
-            },
 
             {
                 -- 霰弹枪上膛、一发后；
@@ -273,6 +263,22 @@ local characters = {
                     { layer = 4, bank = 10, mot = 5011 },
                 },
             },
+
+            {
+                -- 手枪持握状态 (L3.bank=10: 包含站立/走/跑/瞄准及过渡帧)
+                -- Gun holding (L3.bank=10: covers idle/walk/run/aim and transition frames)
+                -- 排除非持枪状态 (L3.bank=10, mot=5000)
+                -- Exclude non-gun holding state (L3.bank=10, mot=5000)
+                -- 排除手枪/马格南（距离阈值接近0，由 weapon_distance_thresholds 控制）
+                -- checks = {
+                --     { layer = 3, bank = 10 },
+                --     -- { layer = 0, bank = 10, mot = 22, _invert = true },
+                --     -- { layer = 4, bank = 10, mot = 5011, _invert = true },
+                -- },
+                distance_check = true,
+                weapons = { "Pistol", "Magnum" },
+            },
+
         },
         default_kill_conditions = {
             { 
