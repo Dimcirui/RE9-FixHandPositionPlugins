@@ -296,7 +296,7 @@ local characters = {
             { { layer = 3, bank = 5} },        -- 单手动作？ open door
         },
         default_weapon_distance_thresholds = {
-            Pistol  = 0.15,
+            Pistol  = 0.1,
             Shotgun = 0.327,
             Grenade = 0.0,
             Melee   = 0.0,
@@ -767,7 +767,13 @@ local function check_conditional(char, go)
         char.ik_forced = false
         char.status = "Kill condition, IK OFF"
         char.active_condition_str = "Kill Condition"
+        char._was_killed = true
         return
+    end
+
+    if char._was_killed then
+        char._was_killed = false
+        char._post_kill_timer = os.clock() + 0.5
     end
 
     -- Match enable conditions
@@ -851,6 +857,11 @@ local function check_conditional(char, go)
     if not item then
         char.status = (active and "Active" or "Idle") .. ", IK not found"
         return
+    end
+
+    if char._post_kill_timer and os.clock() < char._post_kill_timer then
+        active = true
+        dist_info = " (Post-Kill Force)"
     end
 
     if active then
