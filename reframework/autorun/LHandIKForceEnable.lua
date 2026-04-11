@@ -633,6 +633,7 @@ local function ensure_transform(char, go)
     if char._go_ref and char._go_ref ~= go then
         char._transform = nil; char._joints = {}; char._dist_cache = {}; char._ik_item = nil
         char._arm_cache = nil; char._detected_weapon = nil
+        char._last_matched_group = nil; char._probe_end = nil
     end
     char._go_ref = go
     if char._transform then
@@ -780,6 +781,17 @@ local function check_conditional(char, go)
     local matched_group = match_conditions(layers, char.conditions, char)
     local active = matched_group ~= nil
     local dist_info = ""
+    local now = os.clock()
+
+    local group_id = active and tostring(matched_group) or "none"
+    if char._last_matched_group ~= group_id then
+        char._last_matched_group = group_id
+        if active and matched_group.distance_check then
+            char._probe_end = now + 0.5
+        else
+            char._probe_end = nil
+        end
+    end
 
     if active then
         -- Generate readable string of the matched condition
@@ -801,19 +813,26 @@ local function check_conditional(char, go)
 
     -- Grace-style: distance_check on conflict groups (正向：距离<阈值才启用)
     if active and matched_group.distance_check then
-        local group_id = tostring(matched_group)
-        local close, dist = check_distance(char, go, group_id)
+        local dist_group_id = tostring(matched_group)
+        local close, dist = check_distance(char, go, dist_group_id)
         if close == nil then
-            active = false
-            dist_info = " (dist: N/A)"
+            if char._probe_end and now < char._probe_end then
+                active = true
+                dist_info = string.format(" (probing N/A: %.2fs)", char._probe_end - now)
+            else
+                active = false
+                dist_info = " (dist: N/A)"
+            end
         elseif close then
             char._dist_grace_end = nil  -- 手靠近，彻底重置保护期
+            char._probe_end = nil       -- 探测成功，提前结束探测期
             dist_info = string.format(" (dist: %.3fm)", dist)
         else
-            -- 距离超出，检查是否有保护期
-            if matched_group.distance_grace then
-                local now = os.clock()
-                
+            -- 距离超出，优先检查是否在最初的 0.5秒 探测保护期内
+            if char._probe_end and now < char._probe_end then
+                active = true
+                dist_info = string.format(" (probing... dist: %.3fm, %.2fs rem)", dist, char._probe_end - now)
+            elseif matched_group.distance_grace then
                 -- 只有在值为 nil（刚从满足变为不满足）时才赋予倒计时
                 if char._dist_grace_end == nil then
                     char._dist_grace_end = now + matched_group.distance_grace
