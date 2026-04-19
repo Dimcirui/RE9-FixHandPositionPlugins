@@ -1,4 +1,4 @@
--- LHandIKForceEnable.lua  v2.3
+-- LHandIKForceEnable.lua  v2.5
 -- Fix Hand offset issue after skeleton modification in RE9
 --      by forcing keep AnimLHandAdjustIK's LocalEnable=1, LocalDisable=0
 -- Support characters: cp_A100 (Grace), cp_A000 (Leon)
@@ -296,11 +296,11 @@ local characters = {
             { { layer = 3, bank = 5} },        -- 单手动作？ open door
         },
         default_weapon_distance_thresholds = {
-            Pistol  = 0.1,
+            Pistol  = 0.18,
             Shotgun = 0.327,
             Grenade = 0.0,
             Melee   = 0.0,
-            Magnum  = 0.1,
+            Magnum  = 0.18,
             SMG     = 0.275,
             Sniper  = 0.327,
         },
@@ -568,48 +568,49 @@ local function update_detected_weapon(char)
     local t = char._transform
     if not t then return end
 
-    if not char._arm_cache then
-        local arms = {}
-        local ok, child = pcall(function() return t:call("get_Child") end)
-        if not ok or not child then return end
+    local IN_HAND_THRESHOLD = 0.011
+    local detected = nil
+    
+    pcall(function()
+        -- 1. 先读取能显示的武器 (实时遍历)
+        local visible_arms = {}
+        local child = t:call("get_Child")
         while child do
             local ok_go, cgo = pcall(function() return child:call("get_GameObject") end)
             if ok_go and cgo then
                 local ok_n, n = pcall(function() return cgo:call("get_Name") end)
                 if ok_n and n and n:sub(1, 3) == "arm" then
-                    table.insert(arms, { name = n, go = cgo, transform = child })
+                    local ok_ds, ds = pcall(function() return cgo:call("get_DrawSelf") end)
+                    if ok_ds and ds then
+                        table.insert(visible_arms, { child = child, name = n })
+                    end
                 end
             end
             local ok_nx, nx = pcall(function() return child:call("get_Next") end)
             if not ok_nx or not nx then break end
             child = nx
         end
-        char._arm_cache = arms
-    end
-
-    local IN_HAND_THRESHOLD = 0.011
-    local detected = nil
-    for _, arm in ipairs(char._arm_cache) do
-        for _, rule in ipairs(char.arm_weapon_map) do
-            if arm.name:sub(1, #rule.prefix) == rule.prefix then
-                local draw_self = false
-                local ok_ds = pcall(function() draw_self = arm.go:call("get_DrawSelf") end)
-                if not ok_ds then char._arm_cache = nil; return end
-                if draw_self then
-                    local pos = nil
-                    local ok_p = pcall(function() pos = arm.transform:call("get_LocalPosition") end)
-                    if not ok_p then char._arm_cache = nil; return end
-                    if pos and math.abs(pos.x) < IN_HAND_THRESHOLD
-                           and math.abs(pos.y) < IN_HAND_THRESHOLD
-                           and math.abs(pos.z) < IN_HAND_THRESHOLD then
-                        detected = rule.label
+        
+        -- 2. 去判定武器的距离
+        for _, arm_info in ipairs(visible_arms) do
+            local ok_p, pos = pcall(function() return arm_info.child:call("get_LocalPosition") end)
+            if ok_p and pos then
+                local in_hand = math.abs(pos.x) < IN_HAND_THRESHOLD and
+                                math.abs(pos.y) < IN_HAND_THRESHOLD and
+                                math.abs(pos.z) < IN_HAND_THRESHOLD
+                if in_hand then
+                    for _, rule in ipairs(char.arm_weapon_map) do
+                        if arm_info.name:sub(1, #rule.prefix) == rule.prefix then
+                            detected = rule.label
+                            break
+                        end
                     end
+                    if detected then break end
                 end
-                break
             end
         end
-        if detected then break end
-    end
+    end)
+
     char._detected_weapon = detected
 end
 
@@ -760,6 +761,25 @@ local function check_conditional(char, go)
     -- Force measure for real-time UI display when debug is on
     if cfg.debug then
         measure_distance(char, go)
+    end
+
+    -- RE9 Native Heavy Injury Kill Condition
+    local is_heavy_injured = false
+    pcall(function()
+        local md = go:call("getComponent(System.Type)", sdk.typeof("app.MentalStateDriver"))
+        if md then
+            local m_state = md:get_field("_PrevMain")
+            if m_state == 8 then is_heavy_injured = true end
+        end
+    end)
+
+    if is_heavy_injured then
+        if item and char.ik_forced then set_ik_state(item, 0, 1) end
+        char.ik_forced = false
+        char.status = "Heavy Injury, IK OFF"
+        char.active_condition_str = "Heavy Injury State"
+        char._was_killed = true
+        return
     end
 
     -- Kill conditions: immediate disable
@@ -1102,10 +1122,26 @@ re.on_draw_ui(function()
                     if char._last_dist then
                         imgui.text(string.format("Distance: %.3fm", char._last_dist))
                     end
+                end
 
-                    if imgui.button("Reload Config") then
-                        load_char_config(char)
+                imgui.spacing()
+                if imgui.button("Reload Config") then
+                    load_char_config(char)
+                end
+                imgui.same_line()
+                if imgui.button("Reset Config") then
+                    char.char_enabled = char.default_char_enabled
+                    char.distance_threshold = char.default_distance_threshold
+                    char.distance_interval = char.default_distance_interval
+                    char.distance_sustain = char.default_distance_sustain
+                    if char.default_weapon_distance_thresholds then
+                        for k, v in pairs(char.default_weapon_distance_thresholds) do char.weapon_distance_thresholds[k] = v end
                     end
+                    if char.default_weapon_ik_weights then
+                        for k, v in pairs(char.default_weapon_ik_weights) do char.weapon_ik_weights[k] = v end
+                        if char._ik_item then set_ik_weight(char, char._ik_item, get_active_ik_weight(char)) end
+                    end
+                    save_char_config(char)
                 end
 
                 imgui.tree_pop()

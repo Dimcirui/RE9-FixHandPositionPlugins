@@ -1,6 +1,6 @@
 # Force Left Hand IK Enable
 
-**Version: 2.2**  
+**Version: 2.5**  
 **Authors: Dimcirui, Motokajuu**
 
 A REFramework-based script for Resident Evil 9 (RE9) that force-enables left-hand Inverse Kinematics (IK). This script is designed to correct hand offset issues—where the left hand deviates from its intended position—commonly encountered after character skeleton modifications or when using certain mods.
