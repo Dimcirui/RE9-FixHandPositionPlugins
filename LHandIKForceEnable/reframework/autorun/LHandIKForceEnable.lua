@@ -22,7 +22,7 @@
 --     distance_check = use distance verification for this group (Grace conflict groups).
 --   kill_conditions: array of groups (OR of AND). Immediate disable, highest priority.
 --   distance_sustain: when true, if IK is already ON but no condition matches,
---     use distance check to decide whether to maintain IK (Leon's mode).
+--     use distance check to decide whether to maintain IK (Leon's mode). 
 
 local CONFIG_DIR = "LHandIKFix/"
 local OFFSET_ENABLE = 16
@@ -144,7 +144,12 @@ local characters = {
             },
         },
         default_kill_conditions = {
-            { { layer = 5, bank = 0, _invert = true } },  -- 手电筒 flashlight
+            { { layer = 5, bank = 0, _invert = true },
+              { layer = 5, bank = 100, mot = 1220, _invert = true },
+              { layer = 5, bank = 100, mot = 1221, _invert = true },
+              { layer = 5, bank = 100, mot = 1231, _invert = true },
+              { layer = 5, bank = 100, mot = 1232, _invert = true },
+              { layer = 5, bank = 100, mot = 1233, _invert = true } },  -- 手电筒 flashlight
             { { layer = 5, mot = 6102 } },                 -- 治疗针/切武器 syringe/switch weapon
             { { layer = 3, bank = 0, mot = "invalid" } },  -- 过场动画 cutscene
             { { layer = 3, bank = 0, mot = 6201 } },        -- 手持背包 backpack
@@ -165,34 +170,68 @@ local characters = {
         name = "Leon",
         go_name = "cp_A000",
         default_char_enabled = true,
-        default_distance_threshold = 0.07,
+        default_distance_threshold = 0.1,
         default_distance_interval = 0.1,
-        default_distance_sustain = true,   -- Leon: Use distance detection to maintain IK
+        default_distance_sustain = false,   -- Leon: Use distance detection to maintain IK
         default_conditions = {
+            
             {
-                -- 手枪持握状态 (L3.bank=10: 包含站立/走/跑/瞄准及过渡帧)
-                -- Gun holding (L3.bank=10: covers idle/walk/run/aim and transition frames)
-                -- 排除非持枪状态 (L3.bank=10, mot=5000)
-                -- Exclude non-gun holding state (L3.bank=10, mot=5000)
-                checks = {
-                    { layer = 3, bank = 10 },
-                    { layer = 3, bank = 10, mot = 5000, _invert = true },
+                checks = {                                                      -- 一个简单手枪持枪过渡
+                    { layer = 3, bank = 100 },
+                    -- { layer = 3, bank = 100, mot = 1200, _invert = true},
+                    -- { layer = 3, bank = 100, mot = 1201, _invert = true},
+                    -- { layer = 0, bank = 6, _invert = true},
                 },
+                weapons = { "Pistol", "Magnum" },
             },
+
+            -- {
+            --     checks = {                                                      -- 落地后持枪手枪持枪过渡
+            --         { layer = 3, bank = 0， mot = 3 },
+            --         -- { layer = 3, bank = 100, mot = 1200, _invert = true},
+            --         -- { layer = 3, bank = 100, mot = 1201, _invert = true},
+            --         -- { layer = 0, bank = 6, _invert = true},
+            --     },
+            --     weapons = { "Pistol", "Magnum" },
+            -- },
+
             {
                 -- 霰弹枪上膛、一发后；
                 checks = {
-                    { layer = 3, bank = 10, mot = 5000},
-                    { layer = 4, bank = 10, mot = 5010},
+                    { layer = 8, bank = 100 },
                 },
+                -- weapons_exclude = { "None" },
             },
+
+            {
+                --长枪
+                checks = {
+                    { layer = 3, bank = 10 },
+                    { layer = 7, bank = 100 },  --这个是瞄准
+                },
+                -- distance_check = true,
+                weapons_exclude = { "Pistol", "Magnum", "Melee", "Grenade"},
+            },
+            
+
             {
                 -- 待机过渡/切枪过渡/取消瞄准过渡/闲置检视动画等 (L3.bank=100)
                 -- Transition frames/Switch weapon frames/Cancel aiming frames/Idle inspection animation frames (L3.bank=100)
                 checks = {
                     { layer = 3, bank = 100 },
-                    { layer = 3, bank = 100, mot = 1200, _invert = true}
+                    { layer = 3, bank = 100, mot = 1200, _invert = true},
+                    { layer = 3, bank = 100, mot = 1201, _invert = true},
+                    { layer = 3, bank = 100, mot = 1311, _invert = true},
+                    { layer = 0, bank = 6, _invert = true},
                 },
+                weapons_exclude = { "Pistol", "Magnum", "Melee"},
+            },
+            {
+                checks = {
+                    {layer = 3, bank = 100, mot = 1141},        --磨刀
+                },
+
+                weapons = { "Melee" },
             },
             -- {
             --     -- 冲突组: 持枪/非持枪通用，靠距离检测区分
@@ -224,20 +263,56 @@ local characters = {
                     { layer = 4, bank = 10, mot = 5011 },
                 },
             },
+
+            {
+                -- 手枪持握状态 (L3.bank=10: 包含站立/走/跑/瞄准及过渡帧)
+                -- Gun holding (L3.bank=10: covers idle/walk/run/aim and transition frames)
+                -- 排除非持枪状态 (L3.bank=10, mot=5000)
+                -- Exclude non-gun holding state (L3.bank=10, mot=5000)
+                -- 排除手枪/马格南（距离阈值接近0，由 weapon_distance_thresholds 控制）
+                -- checks = {
+                --     { layer = 3, bank = 10 },
+                --     -- { layer = 0, bank = 10, mot = 22, _invert = true },
+                --     -- { layer = 4, bank = 10, mot = 5011, _invert = true },
+                -- },
+                distance_check = true,
+                weapons = { "Pistol", "Magnum" },
+            },
+
         },
         default_kill_conditions = {
-            { { layer = 5, bank = 0, _invert = true } },  -- 手电筒 flashlight
+            { 
+              { layer = 5, bank = 0, _invert = true },
+              { layer = 5, bank = 100, mot = 1220, _invert = true },
+              { layer = 5, bank = 100, mot = 1221, _invert = true },
+              { layer = 5, bank = 100, mot = 1231, _invert = true },
+              { layer = 5, bank = 100, mot = 1232, _invert = true },
+              { layer = 5, bank = 100, mot = 1233, _invert = true }
+            },  -- 手电筒 flashlight
             { { layer = 5, mot = 6102 } },                 -- 治疗针/切武器 syringe/switch weapon
-            { { layer = 3, bank = 0, mot = "invalid" } }   -- 过场动画 cutscene
+            { { layer = 3, bank = 0, mot = "invalid" } },   -- 过场动画 cutscene
+            { { layer = 0, bank = 10, mot = 22} }, -- 面对敌人时冲刺 run for enemy
+            { { layer = 0, bank = 6} }, -- 也许是体技？
+            { { layer = 3, bank = 5} },        -- 单手动作？ open door
         },
         default_weapon_distance_thresholds = {
-            Pistol  = 0.07,
+            Pistol  = 0.1,
             Shotgun = 0.327,
             Grenade = 0.0,
             Melee   = 0.0,
-            Magnum  = 0.07,
+            Magnum  = 0.1,
             SMG     = 0.275,
             Sniper  = 0.327,
+        },
+        default_weapon_ik_weights = {
+            Pistol  = 0.96,
+            Shotgun = 0.69,
+            Grenade = 0.0,
+            Melee   = 0.96,
+            Magnum  = 0.96,
+            SMG     = 0.69,
+            Sniper  = 0.69,
+            None    = 1.0,
         },
         arm_weapon_map = {
             { prefix = "arm00", label = "Pistol"  },
@@ -249,40 +324,33 @@ local characters = {
             { prefix = "arm06", label = "Sniper"  },
         },
         char_enabled = true,
-        distance_threshold = 0.07,
+        distance_threshold = 0.1,
         distance_interval = 0.1,
-        distance_sustain = true,
+        distance_sustain = false,
         weapon_distance_thresholds = nil,  -- populated by load_char_config
+        weapon_ik_weights = nil,           -- populated by load_char_config
         conditions = nil, kill_conditions = nil,
         status = "Waiting...", fix_count = 0, ik_forced = false, active_condition_str = "None",
         config_source = "default",
         _transform = nil, _joints = {}, _dist_cache = {}, _go_ref = nil,
         _ik_item = nil, _layer_cache = {}, _layer_count = 0,
-        _arm_cache = nil, _weapon_check_time = -999, _detected_weapon = nil
+        _arm_cache = nil, _weapon_check_time = -999, _detected_weapon = nil,
+        _mul_blend_rate = nil
     },
 }
 
 local last_layer_check = -999
 local prev_enabled = true
 
-------------------------------------------------------
--- Normalise conditions (legacy support)
-------------------------------------------------------
-local function normalise_conditions(raw)
-    if not raw then return nil end
-    local out = {}
-    for _, item in ipairs(raw) do
-        if item.checks then
-            table.insert(out, item)
-        else
-            table.insert(out, { checks = item })
-        end
-    end
-    return out
-end
+local TYPE_ACB = sdk.find_type_definition("anim.AnimationControllerBehavior")
+local FIELD_AC = TYPE_ACB and TYPE_ACB:get_field("AnimationController")
+local TYPE_AC  = sdk.find_type_definition("anim.AnimationController")
+local FIELD_AB = TYPE_AC  and TYPE_AC:get_field("AnimationBases")
+local TYPE_LHAND = sdk.find_type_definition("anim.AnimLHandAdjustIK")
+local FIELD_MBR = TYPE_LHAND and TYPE_LHAND:get_field("MulBlendRate")
 
 ------------------------------------------------------
--- JSON config
+-- JSON config (Only saves scalar settings and weights)
 ------------------------------------------------------
 local function load_char_config(char)
     local filename = CONFIG_DIR .. "hand_ik_fix_" .. char.name .. ".json"
@@ -292,49 +360,60 @@ local function load_char_config(char)
         if data.distance_threshold ~= nil then char.distance_threshold = data.distance_threshold end
         if data.distance_interval ~= nil then char.distance_interval = data.distance_interval end
         if data.distance_sustain ~= nil then char.distance_sustain = data.distance_sustain end
-        if data.conditions ~= nil then char.conditions = normalise_conditions(data.conditions) end
-        if data.kill_conditions ~= nil then char.kill_conditions = data.kill_conditions end
         if data.weapon_distance_thresholds ~= nil then
-            -- 先从 defaults 建表（若还未初始化）
             if not char.weapon_distance_thresholds and char.default_weapon_distance_thresholds then
                 char.weapon_distance_thresholds = {}
                 for k, v in pairs(char.default_weapon_distance_thresholds) do
                     char.weapon_distance_thresholds[k] = v
                 end
             end
-            -- 再用 JSON 里的值覆盖
             if char.weapon_distance_thresholds then
                 for k, v in pairs(data.weapon_distance_thresholds) do
-                    if type(v) == "number" then
-                        char.weapon_distance_thresholds[k] = v
-                    end
+                    if type(v) == "number" then char.weapon_distance_thresholds[k] = v end
+                end
+            end
+        end
+        if data.weapon_ik_weights ~= nil then
+            if not char.weapon_ik_weights and char.default_weapon_ik_weights then
+                char.weapon_ik_weights = {}
+                for k, v in pairs(char.default_weapon_ik_weights) do
+                    char.weapon_ik_weights[k] = v
+                end
+            end
+            if char.weapon_ik_weights then
+                for k, v in pairs(data.weapon_ik_weights) do
+                    if type(v) == "number" then char.weapon_ik_weights[k] = v end
                 end
             end
         end
         char.config_source = filename
-        log.info(string.format("[IK Fix] Config loaded for %s from %s", char.name, filename))
     else
         char.char_enabled = char.default_char_enabled
         char.distance_threshold = char.default_distance_threshold
         char.distance_interval = char.default_distance_interval
         char.distance_sustain = char.default_distance_sustain
-        char.conditions = char.default_conditions
-        char.kill_conditions = char.default_kill_conditions
         if char.default_weapon_distance_thresholds then
             char.weapon_distance_thresholds = {}
-            for k, v in pairs(char.default_weapon_distance_thresholds) do
-                char.weapon_distance_thresholds[k] = v
-            end
+            for k, v in pairs(char.default_weapon_distance_thresholds) do char.weapon_distance_thresholds[k] = v end
+        end
+        if char.default_weapon_ik_weights then
+            char.weapon_ik_weights = {}
+            for k, v in pairs(char.default_weapon_ik_weights) do char.weapon_ik_weights[k] = v end
         end
         char.config_source = "default"
     end
-    if not char.conditions then char.conditions = char.default_conditions end
-    if not char.kill_conditions then char.kill_conditions = char.default_kill_conditions end
+    
+    -- ALWAYS use conditions directly from Lua definitions
+    char.conditions = char.default_conditions
+    char.kill_conditions = char.default_kill_conditions
+    
     if not char.weapon_distance_thresholds and char.default_weapon_distance_thresholds then
         char.weapon_distance_thresholds = {}
-        for k, v in pairs(char.default_weapon_distance_thresholds) do
-            char.weapon_distance_thresholds[k] = v
-        end
+        for k, v in pairs(char.default_weapon_distance_thresholds) do char.weapon_distance_thresholds[k] = v end
+    end
+    if not char.weapon_ik_weights and char.default_weapon_ik_weights then
+        char.weapon_ik_weights = {}
+        for k, v in pairs(char.default_weapon_ik_weights) do char.weapon_ik_weights[k] = v end
     end
 end
 
@@ -346,34 +425,27 @@ local function save_char_config(char)
         distance_interval = char.distance_interval,
         distance_sustain = char.distance_sustain,
         weapon_distance_thresholds = char.weapon_distance_thresholds,
-        conditions = char.conditions,
-        kill_conditions = char.kill_conditions,
+        weapon_ik_weights = char.weapon_ik_weights
     })
     char.config_source = filename
 end
 
-for _, char in ipairs(characters) do
-    load_char_config(char)
-end
+for _, char in ipairs(characters) do load_char_config(char) end
 
 ------------------------------------------------------
 -- Core: IK item finder
 ------------------------------------------------------
 local function find_ik_item(char, go)
-    if char._ik_item then
-        -- Verify validity of cached managed object via quick access
-        local ok = pcall(function() return char._ik_item:get_address() end)
-        if ok then return char._ik_item end
-        char._ik_item = nil
-    end
-
-    local acb = go:call("getComponent(System.Type)",
-        sdk.typeof("anim.AnimationControllerBehavior"))
+    if not TYPE_ACB or not FIELD_AC or not FIELD_AB or not TYPE_LHAND then return nil end
+    local acb = go:call("getComponent(System.Type)", sdk.typeof("anim.AnimationControllerBehavior"))
     if not acb then return nil end
-    local ac = acb:get_type_definition():get_field("AnimationController"):get_data(acb)
-    if not ac then return nil end
-    local ab = ac:get_type_definition():get_field("AnimationBases"):get_data(ac)
-    if not ab then return nil end
+    
+    local ok_ac, ac = pcall(function() return FIELD_AC:get_data(acb) end)
+    if not ok_ac or not ac then return nil end
+    
+    local ok_ab, ab = pcall(function() return FIELD_AB:get_data(ac) end)
+    if not ok_ab or not ab then return nil end
+    
     local ok, count = pcall(ab.call, ab, "get_Count")
     if not ok or not count then return nil end
     for i = 0, count - 1 do
@@ -381,7 +453,7 @@ local function find_ik_item(char, go)
         if ok_i and item then
             local ok_t, td = pcall(item.get_type_definition, item)
             if ok_t and td and td:get_full_name() == "anim.AnimLHandAdjustIK" then
-                char._ik_item = item
+                char._ik_item = item  -- store for UI display reference if needed
                 return item
             end
         end
@@ -398,7 +470,7 @@ local function get_layer_data(char, go)
     local lc = motion:call("getLayerCount")
     if not lc then return nil end
     
-    local limit = math.min(lc - 1, 7)
+    local limit = math.min(lc - 1, 8)
     char._layer_count = limit
     
     for i = 0, limit do
@@ -421,7 +493,6 @@ local function match_check(ld, check)
     if check.bank ~= nil and ld.bank ~= check.bank then match = false end
     if check.mot ~= nil then
         if check.mot == "invalid" then
-            -- Special value: check if mot is invalid (>= 0x7FFFFFFF or game returns the maximum value)
             match = (ld.mot >= 2147483647)
         elseif ld.mot ~= check.mot then
             match = false
@@ -429,6 +500,14 @@ local function match_check(ld, check)
     end
     if check._invert then return not match end
     return match
+end
+
+local function get_current_weapon(char)
+    if WeaponPoseFix and WeaponPoseFix.active_weapon then
+        local w = WeaponPoseFix.active_weapon[char.name]
+        if w then return w end
+    end
+    return char._detected_weapon or "None"
 end
 
 local function match_condition_groups(layers, groups)
@@ -445,7 +524,7 @@ local function match_condition_groups(layers, groups)
     return false
 end
 
-local function match_conditions(layers, conditions)
+local function match_conditions(layers, conditions, char)
     if not layers or not conditions then return nil end
     for _, group in ipairs(conditions) do
         local checks = group.checks or group
@@ -455,16 +534,31 @@ local function match_conditions(layers, conditions)
                 group_match = false; break
             end
         end
+        if group_match then
+            if group.weapons then
+                local weapon = char and get_current_weapon(char)
+                local found = false
+                for _, w in ipairs(group.weapons) do
+                    if w == weapon then found = true; break end
+                end
+                if not found then group_match = false end
+            end
+            if group_match and group.weapons_exclude then
+                local weapon = char and get_current_weapon(char)
+                for _, w in ipairs(group.weapons_exclude) do
+                    if w == weapon then group_match = false; break end
+                end
+            end
+        end
         if group_match then return group end
     end
     return nil
 end
 
 ------------------------------------------------------
--- Core: Built-in weapon detection (reads DrawSelf only, no writes)
+-- Core: Built-in weapon detection
 ------------------------------------------------------
 local WEAPON_DETECT_INTERVAL = 0.5
-
 local function update_detected_weapon(char)
     if not char.arm_weapon_map then return end
     local now = os.clock()
@@ -474,7 +568,6 @@ local function update_detected_weapon(char)
     local t = char._transform
     if not t then return end
 
-    -- Build or validate arm cache
     if not char._arm_cache then
         local arms = {}
         local ok, child = pcall(function() return t:call("get_Child") end)
@@ -525,9 +618,7 @@ end
 ------------------------------------------------------
 local function get_active_threshold(char)
     if char.weapon_distance_thresholds then
-        local weapon = (WeaponPoseFix and WeaponPoseFix.active_weapon and WeaponPoseFix.active_weapon[char.name])
-                    or char._detected_weapon
-                    or char._last_weapon
+        local weapon = get_current_weapon(char)
         if weapon and char.weapon_distance_thresholds[weapon] ~= nil then
             return char.weapon_distance_thresholds[weapon]
         end
@@ -596,6 +687,36 @@ local function check_distance(char, go, group_id)
 end
 
 ------------------------------------------------------
+-- Core: Per-weapon IK weight (MulBlendRate.TargetBlendRate)
+------------------------------------------------------
+local function get_active_ik_weight(char)
+    if char.weapon_ik_weights then
+        local weapon = get_current_weapon(char)
+        if char.weapon_ik_weights[weapon] ~= nil then
+            return char.weapon_ik_weights[weapon]
+        end
+    end
+    return 1.0
+end
+
+local function get_mul_blend_rate(char, item)
+    if not FIELD_MBR then return nil end
+    local ok, mbr = pcall(function() return FIELD_MBR:get_data(item) end)
+    if ok and mbr then return mbr end
+    return nil
+end
+
+local OFFSET_TARGET_BLEND_RATE = 0x10  -- TargetBlendRate in anim.BlendParam
+local OFFSET_BLEND_RATE        = 0x14  -- BlendRate in anim.BlendParam
+
+local function set_ik_weight(char, item, weight)
+    local mbr = get_mul_blend_rate(char, item)
+    if not mbr then return end
+    pcall(mbr.write_float, mbr, OFFSET_TARGET_BLEND_RATE, weight)
+    pcall(mbr.write_float, mbr, OFFSET_BLEND_RATE, weight)
+end
+
+------------------------------------------------------
 -- Core: IK state control
 ------------------------------------------------------
 local function set_ik_state(item, enable_val, disable_val)
@@ -646,11 +767,17 @@ local function check_conditional(char, go)
         char.ik_forced = false
         char.status = "Kill condition, IK OFF"
         char.active_condition_str = "Kill Condition"
+        char._was_killed = true
         return
     end
 
+    if char._was_killed then
+        char._was_killed = false
+        char._post_kill_timer = os.clock() + 0.5
+    end
+
     -- Match enable conditions
-    local matched_group = match_conditions(layers, char.conditions)
+    local matched_group = match_conditions(layers, char.conditions, char)
     local active = matched_group ~= nil
     local dist_info = ""
 
@@ -732,10 +859,17 @@ local function check_conditional(char, go)
         return
     end
 
+    if char._post_kill_timer and os.clock() < char._post_kill_timer then
+        active = true
+        dist_info = " (Post-Kill Force)"
+    end
+
     if active then
         local changed = set_ik_state(item, 1, 0)
         if changed then char.fix_count = char.fix_count + 1 end
         char.ik_forced = true
+        -- 写入当前武器对应的 LRWeight
+        set_ik_weight(char, item, get_active_ik_weight(char))
         if char.weapon_distance_thresholds and WeaponPoseFix then
             local w = WeaponPoseFix.active_weapon and WeaponPoseFix.active_weapon[char.name]
             if w then char._last_weapon = w end
@@ -746,6 +880,11 @@ local function check_conditional(char, go)
             set_ik_state(item, 0, 1)
             char.ik_forced = false
             char._last_weapon = nil
+        end
+        -- 即使 IK 处于 OFF 状态，只要有 weapon_ik_weights 配置，也持续写入当前 weight
+        -- 这样 blendrate 滑条的调节无论 distance_sustain 是否启用都能即时生效
+        if char.weapon_ik_weights then
+            set_ik_weight(char, item, get_active_ik_weight(char))
         end
         char.status = "Idle, IK OFF" .. dist_info
     end
@@ -823,6 +962,12 @@ local function conditions_string(conditions)
                 c.mot  ~= nil and tostring(c.mot)  or "*"))
         end
         local suffix = group.distance_check and " [dist]" or ""
+        if group.weapons then
+            suffix = suffix .. " [only:" .. table.concat(group.weapons, ",") .. "]"
+        end
+        if group.weapons_exclude then
+            suffix = suffix .. " [excl:" .. table.concat(group.weapons_exclude, ",") .. "]"
+        end
         table.insert(groups, "(" .. table.concat(parts, " AND ") .. ")" .. suffix)
     end
     return table.concat(groups, "\n  OR ")
@@ -898,7 +1043,34 @@ re.on_draw_ui(function()
                     end
                 end
 
+                -- Per-weapon IK weights (Leon only)
+                if char.weapon_ik_weights then
+                    local weapon_order = { "Pistol", "Shotgun", "Grenade", "Melee", "Magnum", "SMG", "Sniper", "None" }
+                    local current_weapon = (WeaponPoseFix and WeaponPoseFix.active_weapon and WeaponPoseFix.active_weapon[char.name])
+                                       or char._detected_weapon or "None"
+                    imgui.separator()
+                    imgui.text("Per-Weapon IK Weight (LRWeight):")
+                    for _, wname in ipairs(weapon_order) do
+                        if char.weapon_ik_weights[wname] ~= nil then
+                            local label = (wname == current_weapon) and (wname .. " [active]") or wname
+                            local changed_iw, new_iw = imgui.slider_float(
+                                label .. "##ikw_" .. char.name,
+                                char.weapon_ik_weights[wname],
+                                0.0, 1.0, "%.2f")
+                            if changed_iw then
+                                char.weapon_ik_weights[wname] = new_iw
+                                -- 只要 IK item 存在就实时更新，不管 IK 是否强制开启
+                                if char._ik_item then
+                                    set_ik_weight(char, char._ik_item, new_iw)
+                                end
+                                save_char_config(char)
+                            end
+                        end
+                    end
+                end
+
                 if cfg.debug then
+                    imgui.text("Weapon: " .. get_current_weapon(char))
                     imgui.text("Enable:\n  " .. conditions_string(char.conditions))
                     imgui.text("Kill: " .. kill_conditions_string(char.kill_conditions))
                     imgui.text(string.format("Config: %s", char.config_source))
