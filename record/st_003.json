@@ -1,0 +1,203 @@
+{
+    "cp_A000": {
+        "all_components": [
+            "INIT_FLAG",
+            "via.Transform",
+            "via.physics.CharacterController",
+            "via.motion.Motion",
+            "via.motion.MotionFsm2",
+            "app.AdjustTerrain",
+            "app.SequenceTrackUpdater",
+            "app.MotionEventMediator",
+            "via.motion.ActorMotion",
+            "app.RaytracingCullingController",
+            "app.TimelineEventResetSimulation",
+            "anim.AnimationControllerBehavior",
+            "app.lod.LODProcessorApp",
+            "app.PlayerConfigurationHolder",
+            "via.motion.DummySkeleton",
+            "app.PlayerCameraPositionSetting",
+            "via.dynamics.Ragdoll",
+            "app.PlayerMeshController",
+            "soundlib.SoundMotionSequence",
+            "app.SoundPlParameter",
+            "app.GameAttributeController",
+            "app.TimelineEventActorPlayer",
+            "soundlib.SoundContainer",
+            "app.SoundSpaceReferencePositionSender",
+            "app.MotionCameraContainer",
+            "app.InteractTriggerActionGuideButtonCommandHolder",
+            "app.InteractTriggerActionGuideButtonMashingHolder",
+            "app.InteractTriggerActionGuideCompositeHolder",
+            "app.InteractTriggerActionGuideMultipleButtonCommandHolder",
+            "via.render.Stamp",
+            "via.relib.effect.behavior.ReLibMarkStampController",
+            "via.render.RenderTargetOperator",
+            "via.render.StampReferencingComputeSkinning",
+            "app.StampTargetController",
+            "app.SwitchPlayerView",
+            "app.PlayerStreamingTextureController",
+            "app.PhotoPoseDataContainer",
+            "app.TimelineEventCharacterSurfaceMaterialMediator",
+            "app.PlayerEffectCharacterSurfaceMaterialController",
+            "app.TramDataContainer",
+            "app.Cp_A000Updater",
+            "via.effect.script.ObjectEffectManager2",
+            "via.motion.Chain2",
+            "via.character.CollisionShapePreset",
+            "via.render.AmbientOcclusionGeometry",
+            "app.AmbientOcclusionGeometryController",
+            "via.render.SwingWind",
+            "app.PhotoModeEffectSetting",
+            "anim.SubAnimationControllerBehavior_AfterCamera",
+            "app.AnimationTargetController",
+            "app.AppIkLookAtMentalControllerForPlayer",
+            "via.physics.Colliders",
+            "app.AppIkLookAtTargetLookAroundForPlayer",
+            "app.AppIkLookAt",
+            "app.EnvironmentCheckController",
+            "via.physics.RequestSetCollider",
+            "app.HitController",
+            "app.AdjustPress",
+            "app.MotionTransitionControl.MotionTransitionSetter",
+            "app.DOTController",
+            "app.SemiautoDeviceVibrationPlayer",
+            "app.PlayerEquipment",
+            "app.WaterObstacleController",
+            "app.UpperBodyPreAddController",
+            "app.PhonemeLipSyncPlayer",
+            "app.LocalCollisionShapePresetRegister",
+            "app.ActorPlayerMeshController",
+            "app.GameObjectStateController",
+            "app.PlayerThinkDriver",
+            "app.Cp_A000AttackDamageDriver",
+            "app.PlayerActionDriver",
+            "app.PlayerEnvironmentProcessDriver",
+            "app.CharacterTramDriver",
+            "app.CharacterConversationActorDriver",
+            "app.CommonMessageRequestDriver",
+            "app.CharacterInteractiveMessageDriver",
+            "app.PlayerRagdollDriver",
+            "app.CharacterMontageSecondaryAnimationDriver",
+            "app.CharacterSoundDriver",
+            "app.PlayerFacialAnimationDriver",
+            "app.CharacterHitSlowDriver",
+            "app.CharacterStickyPropDriver",
+            "app.CharacterStageSituationDriver",
+            "app.Cp_A000InputDriver",
+            "app.PlayerSubActionDriver",
+            "app.PlayerDOTDriver",
+            "app.Cp_A000InteractDriver",
+            "app.PlayerWeaponChangeDriver",
+            "app.PlayerHoldDriver",
+            "app.PlayerItemGetDriver",
+            "app.PlayerMeleeAttackDriver",
+            "app.PlayerBattleStateDriver",
+            "app.FlashLightDriver",
+            "app.HeartRateDriver",
+            "app.MentalStateDriver",
+            "app.PlayerGripHandOverWriteDriver",
+            "app.PlayerDeadBodyDriver",
+            "app.PlayerUIDriver",
+            "app.PlayerDoorDriver",
+            "app.PlayerDebuffDriver",
+            "app.PlayerStanceDriver",
+            "app.BodyAddCtrlDriver",
+            "app.FingerEmoteCtrlDriver",
+            "app.PlayerCompanionDriver",
+            "app.PlayerMessageDriver",
+            "app.PlayerSpecialWeaponDriver",
+            "app.PlayerCrouchDriver",
+            "app.PlayerFPSMovementDriver",
+            "app.PlayerParryDriver",
+            "app.SickSeizureControlDriver",
+            "via.effect.script.EPVStandard",
+            "app.EPVExpertFootLandingCustom",
+            "app.EPVExpertPartsBreak",
+            "app.EPVExpertDamageEffect",
+            "app.CharacterPosRotAdjusterBehavior",
+            "via.motion.JointConstraintsShare",
+            "app.ItemManager.AssetAssociator",
+            "app.ComponentStateController"
+        ],
+        "driver_data": {
+            "app.HeartRateDriver": {
+                "<HeartRateInternal>k__BackingField": 0,
+                "<IsExistAddFactorFrame>k__BackingField": false,
+                "<IsExistSubFactorFrame>k__BackingField": true,
+                "<MinHeartRate>k__BackingField": 0,
+                "_CurrentMotionVariablesTarget": 0.0,
+                "_PrevMotionVariablesTarget": 0.0
+            },
+            "app.MentalStateDriver": {
+                "<StateFlags>k__BackingField": 12,
+                "_PrevMain": 8,
+                "_PrevSub": 0
+            },
+            "app.PlayerBattleStateDriver": {
+                "<CurrentBattleState>k__BackingField": 1,
+                "<IsSimpleBattleCheckMode>k__BackingField": false,
+                "_CheckRadius": 0.05000000074505806,
+                "_IsEnemyArea": true
+            },
+            "app.PlayerDebuffDriver": null,
+            "app.SickSeizureControlDriver": {
+                "ReduceCount": 0,
+                "_State": 0
+            }
+        },
+        "ik": {
+            "br": 0.0,
+            "dis": 1,
+            "en": 0
+        },
+        "layers": {
+            "L0": {
+                "b": 10,
+                "bl": 1.0,
+                "m": 142
+            },
+            "L1": {
+                "b": 0,
+                "bl": 0.0,
+                "m": 4294967295
+            },
+            "L2": {
+                "b": 0,
+                "bl": 1.0,
+                "m": 4294967295
+            },
+            "L3": {
+                "b": 10,
+                "bl": 1.0,
+                "m": 5000
+            },
+            "L4": {
+                "b": 100,
+                "bl": 1.0,
+                "m": 6000
+            },
+            "L5": {
+                "b": 10,
+                "bl": 1.0,
+                "m": 2101
+            },
+            "L6": {
+                "b": 0,
+                "bl": 1.0,
+                "m": 4294967295
+            },
+            "L7": {
+                "b": 0,
+                "bl": 1.0,
+                "m": 4294967295
+            },
+            "L8": {
+                "b": 0,
+                "bl": 1.0,
+                "m": 4294967295
+            }
+        },
+        "status": null
+    }
+}
