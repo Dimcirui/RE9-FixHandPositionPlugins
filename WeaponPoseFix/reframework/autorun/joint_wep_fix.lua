@@ -307,12 +307,12 @@ re.on_draw_ui(function()
                 local cx, vx = imgui.drag_float("Pos X", j.off_x, 0.0001, -0.5, 0.5, "%.4f"); if cx then j.off_x = vx end
                 local cy, vy = imgui.drag_float("Pos Y", j.off_y, 0.0001, -0.5, 0.5, "%.4f"); if cy then j.off_y = vy end
                 local cz, vz = imgui.drag_float("Pos Z", j.off_z, 0.0001, -0.5, 0.5, "%.4f"); if cz then j.off_z = vz end
-                local rx, vrx = imgui.drag_float("Rot X", j.off_rx, 0.1, -180, 180, "%.1f"); if rx then j.off_rx = vrx end
-                local ry, vry = imgui.drag_float("Rot Y", j.off_ry, 0.1, -180, 180, "%.1f"); if ry then j.off_ry = vry end
-                local rz, vrz = imgui.drag_float("Rot Z", j.off_rz, 0.1, -180, 180, "%.1f"); if rz then j.off_rz = vrz end
+                -- local rx, vrx = imgui.drag_float("Rot X", j.off_rx, 0.1, -180, 180, "%.1f"); if rx then j.off_rx = vrx end
+                -- local ry, vry = imgui.drag_float("Rot Y", j.off_ry, 0.1, -180, 180, "%.1f"); if ry then j.off_ry = vry end
+                -- local rz, vrz = imgui.drag_float("Rot Z", j.off_rz, 0.1, -180, 180, "%.1f"); if rz then j.off_rz = vrz end
                 if imgui.button("Reset") then 
                     j.off_x, j.off_y, j.off_z = 0, 0, 0
-                    j.off_rx, j.off_ry, j.off_rz = 0, 0, 0
+                    -- j.off_rx, j.off_ry, j.off_rz = 0, 0, 0
                 end
                 imgui.spacing(); imgui.pop_id()
             end
