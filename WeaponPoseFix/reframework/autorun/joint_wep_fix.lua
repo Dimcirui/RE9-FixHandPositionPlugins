@@ -19,7 +19,7 @@ WeaponPoseFix.active_weapon = WeaponPoseFix.active_weapon or {}
 local characters = {
     {
         name    = "Grace",
-        go_name = "cp_A100",
+        go_names = {"cp_A100", "cp_A110"},
         enabled = true,
         joints  = {
             { name = "R_Wep", off_x = 0, off_y = 0, off_z = 0, off_rx = 0, off_ry = 0, off_rz = 0 },
@@ -38,7 +38,7 @@ local characters = {
     },
     {
         name    = "Leon",
-        go_name = "cp_A000",
+        go_names = {"cp_A000"},
         enabled = true,
         joints  = {
             { name = "R_Wep", off_x = 0, off_y = 0, off_z = 0, off_rx = 0, off_ry = 0, off_rz = 0 },
@@ -119,8 +119,13 @@ for _, char in ipairs(characters) do load_config(char) end
 local function joint_ok(j) return j and pcall(function() j:call("get_Position") end) end
 
 local function ensure_transform(char)
-    if char._go_ref and not pcall(function() char._go_ref:call("get_Name") end) then
-        char._go_ref, char._transform = nil, nil
+    if char._go_ref then
+        local is_drawn = false
+        pcall(function() is_drawn = char._go_ref:call("get_DrawSelf") end)
+        if not is_drawn then
+            char._go_ref, char._transform = nil, nil
+            char.status = "Hidden (DrawSelf=false)"
+        end
     end
     if char._transform then return char._transform end
 
@@ -129,8 +134,26 @@ local function ensure_transform(char)
     local scene = sdk.call_native_func(sm, sdk.find_type_definition("via.SceneManager"), "get_CurrentScene")
     if not scene then return nil end
 
-    local go = scene:call("findGameObject(System.String)", char.go_name)
-    if not go then return nil end
+    local go = nil
+    for _, gname in ipairs(char.go_names) do
+        local temp_go = scene:call("findGameObject(System.String)", gname)
+        if temp_go then
+            local is_drawn = false
+            pcall(function() is_drawn = temp_go:call("get_DrawSelf") end)
+            if is_drawn then
+                go = temp_go
+                break
+            else
+                char.status = "Hidden (DrawSelf=false)"
+                return nil
+            end
+        end
+    end
+    
+    if not go then 
+        char.status = "Not in scene"
+        return nil 
+    end
     char._go_ref = go
     char._transform = go:call("get_Transform")
     return char._transform
@@ -203,7 +226,9 @@ re.on_frame(function()
             end
             char.status = string.format("Active | weapon: %s | writes: %d", char._detected_weapon or "None", char.write_count)
         else
-            char.status = char.enabled and "Not in scene" or "Disabled"
+            if not char.enabled then
+                char.status = "Disabled"
+            end
         end
     end
 end)
@@ -317,6 +342,8 @@ re.on_draw_ui(function()
                 imgui.spacing(); imgui.pop_id()
             end
             if imgui.button("Save") then save_config(char) end
+            imgui.same_line()
+            if imgui.button("Reload Config") then load_config(char) end
             imgui.tree_pop()
         end
         imgui.pop_id()

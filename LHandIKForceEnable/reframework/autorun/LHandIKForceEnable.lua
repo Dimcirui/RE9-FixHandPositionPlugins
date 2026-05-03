@@ -971,14 +971,25 @@ re.on_frame(function()
                 char._go_ref = go
             end
             
+            local is_drawn = false
             if go then
+                pcall(function() is_drawn = go:call("get_DrawSelf") end)
+            end
+            
+            if go and is_drawn then
                 pcall(check_conditional, char, go)
                 if char.arm_weapon_map then
                     pcall(update_detected_weapon, char)
                 end
             else
-                char.status = "Not in scene"
-                char._transform = nil; char._joints = {}; char._dist_cache = {}; char._go_ref = nil; char._ik_item = nil
+                if go then
+                    char.status = "Hidden (DrawSelf=false)"
+                    if char.ik_forced then restore_char(char) end
+                else
+                    char.status = "Not in scene"
+                    char._go_ref = nil
+                end
+                char._transform = nil; char._joints = {}; char._dist_cache = {}; char._ik_item = nil
             end
         end
     end
