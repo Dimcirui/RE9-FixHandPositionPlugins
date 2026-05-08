@@ -145,6 +145,7 @@ local characters = {
         },
         default_kill_conditions = {
             { { layer = 5, bank = 0, _invert = true },
+            --   { layer = 5, bank = 10, mot = 860, _invert = true },
               { layer = 5, bank = 100, mot = 1220, _invert = true },
               { layer = 5, bank = 100, mot = 1221, _invert = true },
               { layer = 5, bank = 100, mot = 1231, _invert = true },
@@ -222,6 +223,7 @@ local characters = {
                     { layer = 3, bank = 100, mot = 1200, _invert = true},
                     { layer = 3, bank = 100, mot = 1201, _invert = true},
                     { layer = 3, bank = 100, mot = 1311, _invert = true},
+                    { layer = 3, bank = 100, mot = 1800, _invert = true },
                     { layer = 0, bank = 6, _invert = true},
                 },
                 weapons_exclude = { "Pistol", "Magnum", "Melee"},
@@ -283,6 +285,7 @@ local characters = {
         default_kill_conditions = {
             { 
               { layer = 5, bank = 0, _invert = true },
+            --   { layer = 5, bank = 10, mot = 860, _invert = true },
               { layer = 5, bank = 100, mot = 1220, _invert = true },
               { layer = 5, bank = 100, mot = 1221, _invert = true },
               { layer = 5, bank = 100, mot = 1231, _invert = true },
@@ -294,6 +297,7 @@ local characters = {
             { { layer = 0, bank = 10, mot = 22} }, -- 面对敌人时冲刺 run for enemy
             { { layer = 0, bank = 6} }, -- 也许是体技？
             { { layer = 3, bank = 5} },        -- 单手动作？ open door
+            -- { { layer = 3, bank = 100, mot = 1800} }, -- 重伤的动作 Heavy Injury Animation
         },
         default_weapon_distance_thresholds = {
             Pistol  = 0.18,
@@ -769,7 +773,7 @@ local function check_conditional(char, go)
         local md = go:call("getComponent(System.Type)", sdk.typeof("app.MentalStateDriver"))
         if md then
             local m_state = md:get_field("_PrevMain")
-            if m_state == 8 then is_heavy_injured = true end
+            -- if m_state == 8 then is_heavy_injured = true end
         end
     end)
 
