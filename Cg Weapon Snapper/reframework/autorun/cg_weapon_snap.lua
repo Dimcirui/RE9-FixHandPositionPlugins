@@ -19,7 +19,16 @@ local EXTRA_ITEMS = {
     { "sm87_121_00_00", "_00" },
     { "sm87_179_00_03", "_01", "Grace" },
     { "sm87_080_00_00", "_00" },
+    
+}
 
+local ACCESSORY_RULES = {
+    { wep = "wp0500", acc = "wp2001", joints = {"Scope_Pos_00"} },
+    { wep = "wp0111", acc = "wp2028", joints = {"MuzzleAttach_Pos_00", "Body"} },
+    { wep = "wp0111", acc = "wp2038", joints = {"Magazine_full", "MagInBullet", "Magazine_empty", "Magazine_onlyone"} },
+    { wep = "wp0111", acc = "wp2052", joints = {"Scope_Pos_00"} },
+    { wep = "wp0111", acc = "wp2094", joints = {"Body", "Other_pos"} },
+    -- 你可以在这里添加更多，格式：{ wep = "武器名", acc = "配件名", joints = {"首选骨骼", "备选骨骼..."} }
 }
 
 local NATIVE_OFFSETS = {
@@ -41,8 +50,8 @@ local has_scanned_this_cutscene = false
 local cutscene_start_time = 0      -- in_cutscene 第一次变 true 的时间
 
 local ACTIVATION_DELAY = 0.0       -- 进入 CG 后等待 N 秒再开始操作
-local DEACTIVATION_DELAY = 1.5    -- CG 结束后持续吸附 N 秒
-local LAYER_CG_PERSIST = 0.3       -- LayerCG 持续超过此秒数才认定为 CG
+local DEACTIVATION_DELAY = 0.0     -- CG 结束后持续吸附 N 秒
+local LAYER_CG_PERSIST = 0.0       -- LayerCG 持续超过此秒数才认定为 CG
 
 local layer_cg_true_since = 0      -- LayerCG 开始为 true 的时间
 local layer_cg_was_true = false    -- 上一帧 LayerCG 是否为 true
@@ -96,10 +105,6 @@ local SKEL_REST = {
     }
 }
 
-local last_first_transform = nil
-local transform_stable_frames = 0
-local in_transition = false
-local STABILITY_THRESHOLD = 5
 
 -- ══════════════════════════════════════════════════════════════════
 -- 性能优化：缓存 sdk 类型查找结果（避免每帧重复查找）
@@ -230,36 +235,13 @@ local function is_attached_to_char(t)
     return false
 end
 
--- 真正的可见性检测：同时检查自身和直接父容器的 Valid (Enabled) 和 DrawSelf
-local function check_visible_with_parent(t, go)
-    if not go then return false end
-    -- 合并 pcall：一次调用检查自身 + 父级
-    local ok, result = pcall(function()
-        local valid = go:call("get_Valid")
-        local ds = go:call("get_DrawSelf")
-        if not valid or not ds then return false end
-        if t then
-            local parent_t = t:call("get_Parent")
-            if parent_t then
-                local parent_go = parent_t:call("get_GameObject")
-                if parent_go then
-                    local p_valid = parent_go:call("get_Valid")
-                    local p_ds = parent_go:call("get_DrawSelf")
-                    if not p_valid or not p_ds then return false end
-                end
-            end
-        end
-        return true
-    end)
-    return ok and result or false
-end
+-- ══════════════════════════════════════════════════════════════════
 
--- ══════════════════════════════════════════════════════════════════
--- 性能优化：check_layer_cg 合并为单个 pcall（原来 7+ 个独立 pcall）
--- ══════════════════════════════════════════════════════════════════
+local typeof_Motion = sdk.typeof("via.motion.Motion")
 local function check_layer_cg(go)
     if not go then return false end
     local ok, result = pcall(function()
+        if go:call("get_DrawSelf") ~= true then return false end
         local motion = go:call("getComponent(System.Type)", typeof_Motion)
         if not motion then return false end
 
@@ -268,101 +250,33 @@ local function check_layer_cg(go)
         local bank0 = layer0:call("get_MotionBankID")
         local mot0 = layer0:call("get_MotionID")
         
-        -- 判断 Bank 0 且 MotID 大于 0 且是 100 的倍数
-        if (bank0 == 0 and mot0 > 0 and (mot0 % 100 == 0)) or (bank0 == 10 and mot0 == 32) then
+        -- 判断 Bank 0 且 MotID 大于或等于0 且是 100 的倍数
+        if (bank0 == 0 and mot0 >= 0 and (mot0 % 100 == 0 or mot0 == 0)) then
             return true
         end
         return false
     end)
     return ok and result == true
 end
-
--- local function check_layer_cg(go)
---     if not go then return false end
---     local ok, result = pcall(function()
---         local motion = go:call("getComponent(System.Type)", typeof_Motion)
---         if not motion then return false end
-
---         local layer3 = motion:call("getLayer", 3)
---         if not layer3 then return false end
---         local bank3 = layer3:call("get_MotionBankID")
---         local mot3 = layer3:call("get_MotionID")
---         if not (bank3 == 0 and mot3 ~= nil and mot3 >= 2147483647) then return false end
-
---         local layer0 = motion:call("getLayer", 0)
---         if layer0 then
---             local bank0 = layer0:call("get_MotionBankID")
---             local mot0 = layer0:call("get_MotionID")
---             if (bank0 == 0 and (mot0 == nil or mot0 == 0 or mot0 == 8 or mot0 == 10)) or bank0 == 500 then
---                 return false
---             end
---         end
---         return true
---     end)
---     return ok and result or false
--- end
-
-local PLAYER_CHARS = {"cp_A000", "cp_A100", "cp_A110", "cp_E900"}
-
+-- 极简 CG 检测逻辑：直接读取 GuiManager 的 canDemoSkip
 -- ══════════════════════════════════════════════════════════════════
--- 性能优化：缓存 findGameObject 结果（避免每帧 4 次引擎遍历）
--- ══════════════════════════════════════════════════════════════════
-local _cached_player_gos = {}       -- pname -> { go=go, valid_until=time }
-local _player_go_cache_ttl = 0.5    -- 缓存生存时间（秒）
-
-local function get_player_go(scene, pname, now)
-    local entry = _cached_player_gos[pname]
-    
-    if entry and now < entry.valid_until then
-        -- 缓存命中，且未过期
-        local go = entry.go
-        if go then
-            local ok, valid = pcall(go.call, go, "get_Valid")
-            if ok and valid then return go end
-            -- 如果缓存的物体突然无效了，让它强行过期，重新查找
-            entry.valid_until = 0 
-        else
-            -- 缓存命中，且明确记录了该物体【不存在】（go == nil）
-            -- 直接返回 nil，不要每帧都去 findGameObject！
-            return nil
-        end
-    end
-
-    local ok, go = pcall(scene.call, scene, "findGameObject(System.String)", pname)
-    if not ok then go = nil end
-    
-    if not entry then
-        entry = { go = go, valid_until = now + _player_go_cache_ttl }
-        _cached_player_gos[pname] = entry
-    else
-        entry.go = go
-        entry.valid_until = now + _player_go_cache_ttl
-    end
-    return go
-end
-
-local function check_if_in_cg(scene, now)
-    local player_found = false
-    local any_player_visible = false
-
-    for _, pname in ipairs(PLAYER_CHARS) do
-        local go = get_player_go(scene, pname, now)
-        if go then
-            player_found = true
-            local ok, visible = pcall(go.call, go, "get_DrawSelf")
-            if not ok then visible = false end
-
-            if visible then
-                any_player_visible = true
-                if check_layer_cg(go) then return true end
+local gui_field_canDemoSkip = nil
+local function check_if_in_cg()
+    local gui_mgr = sdk.get_managed_singleton(sdk.game_namespace("GuiManager"))
+    if gui_mgr then
+        if not gui_field_canDemoSkip then
+            local fields = gui_mgr:get_type_definition():get_fields()
+            for _, f in ipairs(fields) do
+                if f:get_name():find("canDemoSkip") then
+                    gui_field_canDemoSkip = f
+                    break
+                end
             end
         end
+        if gui_field_canDemoSkip then
+            return gui_field_canDemoSkip:get_data(gui_mgr) == true
+        end
     end
-
-    if not player_found or not any_player_visible then
-        return true
-    end
-
     return false
 end
 
@@ -396,7 +310,20 @@ local function scan_scene_objects(t, depth)
 
             local is_char = false
             for _, cname in ipairs(TARGET_CHARS) do
-                if name:find(cname) then is_char = true; break end
+                if name:find(cname) then
+                    is_char = true
+                    local p_t = sc(cur, "get_Parent")
+                    if p_t then
+                        local p_go = sc(p_t, "get_GameObject")
+                        if p_go then
+                            local pname = tostring(sc(p_go, "get_Name") or "")
+                            if not pname:find("ConstraintUniversalPositionRoot") then
+                                is_char = false
+                            end
+                        end
+                    end
+                    break
+                end
             end
 
             if is_char then
@@ -473,7 +400,16 @@ local function scan_scene_objects(t, depth)
                             j0_to_muzzle = { x = j0_to_muzzle.x, y = j0_to_muzzle.y, z = j0_to_muzzle.z }
                         end
                     end
-                    table.insert(cached_weapons, { name=name, go=go, transform=cur, j0=j0, j1=j1, j_muzzle=j_muzzle, j_extra=j_extra, is_extra=is_extra, exclusive_char=exclusive_char, j0_to_j1=j0_to_j1, j0_to_muzzle=j0_to_muzzle, snapped_to=nil, dist_to_hand=-1 })
+                    table.insert(cached_weapons, { 
+                        name=name, go=go, transform=cur, 
+                        j0=j0, j1=j1, j_muzzle=j_muzzle, 
+                        j_extra=j_extra, 
+                        has_custom_joint = (extra_joint_name ~= nil),
+                        is_extra=is_extra, 
+                        exclusive_char=exclusive_char, 
+                        j0_to_j1=j0_to_j1, j0_to_muzzle=j0_to_muzzle, 
+                        snapped_to=nil, dist_to_hand=-1 
+                    })
                 end
             end
         end
@@ -571,10 +507,8 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
     -- 每帧重置 vec pool
     vec_pool_reset()
 
-    -- ── 基于动画 Layer 的 CG 检测 ──────────────────────────────────────
-    local sm = sdk.get_native_singleton("via.SceneManager")
-    local scene = sm and sdk.call_native_func(sm, type_SceneManager, "get_CurrentScene") or nil
-    local layer_cg_now = scene and check_if_in_cg(scene, now) or false
+    -- ── 基于 UI 状态的 CG 检测 ──────────────────────────────────────
+    local layer_cg_now = check_if_in_cg()
 
     if layer_cg_now then
         if not layer_cg_was_true then
@@ -609,80 +543,50 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
 
     if now - cutscene_start_time < ACTIVATION_DELAY then return end
 
-    local current_ft = nil
-    if scene then current_ft = sc(scene, "get_FirstTransform") end
-
     if not has_scanned_this_cutscene then
-        -- 初次进入 CG（或者上一次过渡结束），直接扫
-        log.info("[WeaponSnap] Triggering Full Scan (First entry or stable after transition)")
+        log.info("[WeaponSnap] Triggering Full Scan (Entered CG)")
         force_full_scan()
         has_scanned_this_cutscene = true
-        
-        last_first_transform = current_ft
-        transform_stable_frames = 0
-        in_transition = false
-    else
-        -- CG 进行中，监控 FirstTransform 抖动
-        if current_ft ~= last_first_transform then
-            transform_stable_frames = 0
-            if not in_transition then
-                log.info("[WeaponSnap] CG Transition detected (FirstTransform changed)")
-                in_transition = true
-            end
-        else
-            if in_transition then
-                transform_stable_frames = transform_stable_frames + 1
-                if transform_stable_frames >= STABILITY_THRESHOLD then
-                    in_transition = false
-                    
-                    local should_rescan = false
-                    if #cached_chars == 0 then
-                        should_rescan = true
-                    else
-                        for _, char in ipairs(cached_chars) do
-                            -- 只有当物体彻底销毁/失效时，ds 才会是 nil
-                            local ds = sc(char.go, "get_Valid")
-                            if ds == nil then
-                                should_rescan = true
-                                break
-                            end
-                        end
-                    end
-                    
-                    if should_rescan then
-                        log.info("[WeaponSnap] CG Transition stabilized! Stale chars detected. Rescanning.")
-                        has_scanned_this_cutscene = false -- 触发下一帧的重扫
-                    else
-                        log.info("[WeaponSnap] CG Transition stabilized! Chars still valid. Skipping rescan.")
-                    end
-                end
-            end
-        end
-        last_first_transform = current_ft
     end
 
     local occupied_hands = {}
 
-    local wp2001 = nil
-    local wp0500 = nil
+    local active_accessories = {}
     for _, w in ipairs(cached_weapons) do
         w._special_snap = nil
-        if w.name:find("wp2001") then
-            wp2001 = w
-            w._special_snap = true
+    end
+
+    for _, rule in ipairs(ACCESSORY_RULES) do
+        local found_wep, found_acc
+        for _, w in ipairs(cached_weapons) do
+            if not found_wep and w.name:find(rule.wep) then found_wep = w end
+            if not found_acc and w.name:find(rule.acc) then found_acc = w end
         end
-        if w.name:find("wp0500") then wp0500 = w end
+        if found_wep and found_acc then
+            found_acc._special_snap = true
+            table.insert(active_accessories, { wep = found_wep, acc = found_acc, rule = rule })
+        end
     end
 
     -- ══ 性能优化：每帧只算一次 FK，缓存到角色上 ══
+    -- ══ 性能优化：每帧只算一次 FK，缓存到角色上 ══
     for _, char in ipairs(cached_chars) do
-        char._fk_r_wep = fk_wep_world_pos(char, "R")
-        char._fk_l_wep = fk_wep_world_pos(char, "L")
-        -- 持久化复制（vec pool 会在帧末回收）
-        if char._fk_r_wep then char._fk_r_wep = { x = char._fk_r_wep.x, y = char._fk_r_wep.y, z = char._fk_r_wep.z } end
-        if char._fk_l_wep then char._fk_l_wep = { x = char._fk_l_wep.x, y = char._fk_l_wep.y, z = char._fk_l_wep.z } end
+        -- 动态过滤：只计算处于活动 CG 状态的角色
+        if check_layer_cg(char.go) then
+            char._is_active_this_frame = true
+            char._fk_r_wep = fk_wep_world_pos(char, "R")
+            char._fk_l_wep = fk_wep_world_pos(char, "L")
+            -- 持久化复制（vec pool 会在帧末回收）
+            if char._fk_r_wep then char._fk_r_wep = { x = char._fk_r_wep.x, y = char._fk_r_wep.y, z = char._fk_r_wep.z } end
+            if char._fk_l_wep then char._fk_l_wep = { x = char._fk_l_wep.x, y = char._fk_l_wep.y, z = char._fk_l_wep.z } end
+        else
+            char._is_active_this_frame = false
+            char._fk_r_wep = nil
+            char._fk_l_wep = nil
+            char.calc_l_wep_pos = nil
+            char.calc_r_wep_pos = nil
+        end
     end
-
     for _, wep in ipairs(cached_weapons) do
         if wep._special_snap then
             -- 跳过普通吸附
@@ -702,6 +606,7 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
                         wep._best_cp = nil
 
                         for _, char in ipairs(cached_chars) do
+                            if not char._is_active_this_frame then goto continue_char end
                             if wep.exclusive_char and wep.exclusive_char ~= char.mapped_name then goto continue_char end
                             local offsets = (char.mapped_name == "Grace") and NATIVE_OFFSETS.Grace or NATIVE_OFFSETS.Leon
                             local joints = get_char_joints(char)
@@ -771,18 +676,20 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
                                             local d1 = p1 and math.sqrt((p1.x-pure_pos.x)^2+(p1.y-pure_pos.y)^2+(p1.z-pure_pos.z)^2) or 99999
                                             
                                             if wep.is_extra then
-                                                -- 列表物体的逻辑：只检测 Root 和 指定骨骼 (j_extra)
-                                                local best_d, best_j = d0, j0
-                                                if wep.j_extra then
-                                                    local pf = sc(wep.j_extra, "get_Position")
-                                                    if pf then
-                                                        local df = math.sqrt((pf.x-pure_pos.x)^2+(pf.y-pure_pos.y)^2+(pf.z-pure_pos.z)^2)
-                                                        if df < best_d then
-                                                            best_d, best_j = df, wep.j_extra
+                                                -- 列表物体的逻辑
+                                                if wep.has_custom_joint then
+                                                    -- 如果列表里明确写了骨骼名，则【只检测】该骨骼
+                                                    if wep.j_extra then
+                                                        local pf = sc(wep.j_extra, "get_Position")
+                                                        if pf then
+                                                            best_for_char = math.sqrt((pf.x-pure_pos.x)^2+(pf.y-pure_pos.y)^2+(pf.z-pure_pos.z)^2)
+                                                            best_j_for_char = wep.j_extra
                                                         end
                                                     end
+                                                else
+                                                    -- 只有没写骨骼名时，才退而求其次吸附第一根骨骼 (j0)
+                                                    best_for_char, best_j_for_char = d0, j0
                                                 end
-                                                best_for_char, best_j_for_char = best_d, best_j
                                             else
                                                 -- 原有 wp 物体的逻辑：检测 d0 和 d1，维持原有优先级
                                                 if d1 < SNAP_THRESHOLD then
@@ -874,10 +781,32 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
                                                     else
                                                         wep.applied_delta = {x=0, y=0, z=0}
                                                     end
+                                                elseif wep.is_extra and wep.has_custom_joint then
+                                                    -- 自定义骨骼模式：只移动指定的骨骼，不移动根节点 transform
+                                                    local snap_target = target_pos
+                                                    local inv_rot = vec4(-p_rot.x, -p_rot.y, -p_rot.z, p_rot.w)
+                                                    local world_delta = vec3(snap_target.x - p_world.x, snap_target.y - p_world.y, snap_target.z - p_world.z)
+                                                    local new_local = quat_mul_vec(inv_rot, world_delta)
+                                                    active_joint:call("set_LocalPosition", Vector3f.new(new_local.x, new_local.y, new_local.z))
+                                                    if p_active then
+                                                        wep.applied_delta = {
+                                                            x = snap_target.x - p_active.x,
+                                                            y = snap_target.y - p_active.y,
+                                                            z = snap_target.z - p_active.z
+                                                        }
+                                                    else
+                                                        wep.applied_delta = {x=0, y=0, z=0}
+                                                    end
                                                 else
-                                                    -- 普通模式：直接用世界坐标 set_Position，避免父骨骼叠加偏移
+                                                    -- 普通模式：通过移动 transform，使得 active_joint 对齐到 target_pos
                                                     local curr_pos = wep.transform:call("get_Position")
-                                                    wep.transform:call("set_Position", target_pos)
+                                                    local a_pos = p_active or curr_pos
+                                                    local new_pos = Vector3f.new(
+                                                        curr_pos.x + (target_pos.x - a_pos.x),
+                                                        curr_pos.y + (target_pos.y - a_pos.y),
+                                                        curr_pos.z + (target_pos.z - a_pos.z)
+                                                    )
+                                                    wep.transform:call("set_Position", new_pos)
                                                     wep.applied_delta = {
                                                         x = target_pos.x - curr_pos.x,
                                                         y = target_pos.y - curr_pos.y,
@@ -910,23 +839,34 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
         end
     end
 
-    -- 之后再处理 wp2001 到 wp0500 的特殊吸附，这样可以带上 wp0500 的 applied_delta
-    if wp2001 and wp0500 then
+    -- 之后再处理配件到主武器的特殊吸附
+    for _, pair in ipairs(active_accessories) do
         pcall(function()
-            local j_src = sc(wp2001.transform, "getJointByName", "Scope_Pos_00")
-            local j_dst = sc(wp0500.transform, "getJointByName", "Scope_Pos_00")
+            local w_wep = pair.wep
+            local w_acc = pair.acc
+            local j_src, j_dst, matched_jname
+            
+            for _, jname in ipairs(pair.rule.joints) do
+                j_src = sc(w_acc.transform, "getJointByName", jname)
+                j_dst = sc(w_wep.transform, "getJointByName", jname)
+                if j_src and j_dst then
+                    matched_jname = jname
+                    break
+                end
+            end
+
             if j_src and j_dst then
                 local p_dst = sc(j_dst, "get_Position")
                 local p_src = sc(j_src, "get_Position")
-                local p_trans = sc(wp2001.transform, "get_Position")
+                local p_trans = sc(w_acc.transform, "get_Position")
 
                 if p_dst and p_src and p_trans then
                     local target_trans_x = p_dst.x - (p_src.x - p_trans.x)
                     local target_trans_y = p_dst.y - (p_src.y - p_trans.y)
                     local target_trans_z = p_dst.z - (p_src.z - p_trans.z)
 
-                    wp2001.transform:call("set_Position", Vector3f.new(target_trans_x, target_trans_y, target_trans_z))
-                    wp2001.snapped_to = "wp0500 (Scope_Pos_00 via Transform)"
+                    w_acc.transform:call("set_Position", Vector3f.new(target_trans_x, target_trans_y, target_trans_z))
+                    w_acc.snapped_to = w_wep.name .. " (" .. matched_jname .. " via Transform)"
                 end
             end
         end)
@@ -950,9 +890,35 @@ re.on_draw_ui(function()
         if in_cutscene and #cached_chars > 0 then
             imgui.text("--- Active Target Characters ---")
             for _, char in ipairs(cached_chars) do
-                local ds = sc(char.go, "get_Valid")
-                local status_text = (ds == true) and "[Active]" or (ds == false) and "[Hidden]" or "[Stale/Nil]"
+                local ds_valid = sc(char.go, "get_Valid")
+                local ds_draw = sc(char.go, "get_DrawSelf")
+                local status_text = string.format("[V:%s D:%s]", tostring(ds_valid), tostring(ds_draw))
                 
+                -- 获取动画信息
+                local bank_id, mot_id = -1, -1
+                local is_active_cg = false
+                pcall(function()
+                    local motion = char.go:call("getComponent(System.Type)", typeof_Motion)
+                    if motion then
+                        local layer0 = motion:call("getLayer", 0)
+                        if layer0 then
+                            bank_id = layer0:call("get_MotionBankID") or -1
+                            mot_id = layer0:call("get_MotionID") or -1
+                            is_active_cg = check_layer_cg(char.go)
+                        end
+                    end
+                end)
+                
+                local cg_tag = is_active_cg and " [ACTIVE CG]" or ""
+                local motion_text = string.format(" [B:%d M:%d]%s", bank_id, mot_id, cg_tag)
+
+                local parent_name = "None"
+                local p_t = sc(char.transform, "get_Parent")
+                if p_t then
+                    local p_go = sc(p_t, "get_GameObject")
+                    if p_go then parent_name = tostring(sc(p_go, "get_Name") or "Unknown") end
+                end
+
                 local l_pos, r_pos = "nil", "nil"
                 if char.calc_l_wep_pos then
                     l_pos = string.format("(%.1f,%.1f,%.1f)", char.calc_l_wep_pos.x, char.calc_l_wep_pos.y, char.calc_l_wep_pos.z)
@@ -960,7 +926,12 @@ re.on_draw_ui(function()
                 if char.calc_r_wep_pos then
                     r_pos = string.format("(%.1f,%.1f,%.1f)", char.calc_r_wep_pos.x, char.calc_r_wep_pos.y, char.calc_r_wep_pos.z)
                 end
-                imgui.text(string.format("%s [L:%s R:%s]", char.name, l_pos, r_pos))
+                
+                if is_active_cg then
+                    imgui.text_colored(string.format("%s %s%s (Parent: %s) [L:%s R:%s]", status_text, char.name, motion_text, parent_name, l_pos, r_pos), 0xFF00FF00)
+                else
+                    imgui.text(string.format("%s %s%s (Parent: %s) [L:%s R:%s]", status_text, char.name, motion_text, parent_name, l_pos, r_pos))
+                end
             end
             imgui.text("--------------------------------")
 
@@ -972,9 +943,17 @@ re.on_draw_ui(function()
                     p = p or sc(wep.transform, "get_Position")
                     if p then w_pos = string.format("(%.2f, %.2f, %.2f)", p.x, p.y, p.z) end
 
-                    local visible = sc(wep.go, "get_DrawSelf")
-                    local status_text = visible and "[Active]" or "[Hidden]"
-                    imgui.text(string.format("%s %s %s -> %s (D:%.3f)", status_text, wep.name, w_pos, wep.snapped_to or "Waiting", wep.dist_to_hand))
+                    local valid = sc(wep.go, "get_Valid")
+                    local status_text = "[V:" .. ((valid == nil) and "nil" or tostring(valid)) .. "]"
+
+                    local parent_name = "None"
+                    local p_t = sc(wep.transform, "get_Parent")
+                    if p_t then
+                        local p_go = sc(p_t, "get_GameObject")
+                        if p_go then parent_name = tostring(sc(p_go, "get_Name") or "Unknown") end
+                    end
+
+                    imgui.text(string.format("%s %s (Parent: %s) %s -> %s (D:%.3f)", status_text, wep.name, parent_name, w_pos, wep.snapped_to or "Waiting", wep.dist_to_hand))
                 end
             end
         end
