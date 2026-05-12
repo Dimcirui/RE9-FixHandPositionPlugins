@@ -446,6 +446,16 @@ local ROOT_BONES = { root = true, Hip = true }
 local R_CHAIN = {"root","Hip","Spine_0","Spine_1","Spine_2", "R_Arm_Clavicle","R_Arm_Upper","R_Arm_Lower","R_Arm_Hand"}
 local L_CHAIN = {"root","Hip","Spine_0","Spine_1","Spine_2", "L_Arm_Clavicle","L_Arm_Upper","L_Arm_Lower","L_Arm_Hand"}
 
+-- 四元数乘法：q1 * q2
+local function quat_mul(q1, q2)
+    return vec4(
+        q1.w*q2.x + q1.x*q2.w + q1.y*q2.z - q1.z*q2.y,
+        q1.w*q2.y - q1.x*q2.z + q1.y*q2.w + q1.z*q2.x,
+        q1.w*q2.z + q1.x*q2.y - q1.y*q2.x + q1.z*q2.w,
+        q1.w*q2.w - q1.x*q2.x - q1.y*q2.y - q1.z*q2.z
+    )
+end
+
 local function fk_wep_world_pos(char, side)
     local skel = SKEL_REST[char.mapped_name]
     if not skel or not skel.bones then return nil end
@@ -455,35 +465,162 @@ local function fk_wep_world_pos(char, side)
 
     local prev_pos, prev_rot = nil, nil
 
-    for _, bname in ipairs(chain) do
+    for i, bname in ipairs(chain) do
         local j = jcache[bname]
         if not j then return nil end
 
-        local rot = sc(j, "get_Rotation")
-        if not rot then return nil end
-        local pos
+        local pos, rot
 
-        if ROOT_BONES[bname] then
+        if bname == "root" then
+            -- Root：直接使用世界坐标和世界旋转
             pos = sc(j, "get_Position")
-            if not pos then return nil end
+            rot = sc(j, "get_Rotation")
+            if not pos or not rot then return nil end
+
+        elseif bname == "Hip" then
+            -- Hip：位移用 get_LocalPosition()（动画/IK 驱动，合法大位移）
+            --      旋转用 get_LocalRotation()（local_rot 已含 rest_rot，直接乘）
+            local lp = sc(j, "get_LocalPosition")
+            local lr = sc(j, "get_LocalRotation")
+            if not lp or not lr or not prev_pos or not prev_rot then return nil end
+
+            local rotated = quat_mul_vec(prev_rot, vec3(lp.x, lp.y, lp.z))
+            pos = vec3(prev_pos.x + rotated.x, prev_pos.y + rotated.y, prev_pos.z + rotated.z)
+            rot = quat_mul(prev_rot, lr)
+
         else
-            local b = skel.bones[bname]
-            local off = b and b.local_offset
-            if not off or not prev_pos or not prev_rot then return nil end
+            -- 其他骨骼：位移用 JSON local_offset（过滤 mod 注入的额外偏移）
+            --           旋转用 get_LocalRotation()（直接乘，不再额外引入 rest_rot）
+            local bdata = skel.bones[bname]
+            local off = bdata and bdata.local_offset
+            local lr  = sc(j, "get_LocalRotation")
+            if not off or not lr or not prev_pos or not prev_rot then return nil end
+
             local rotated = quat_mul_vec(prev_rot, vec3(off[1], off[2], off[3]))
             pos = vec3(prev_pos.x + rotated.x, prev_pos.y + rotated.y, prev_pos.z + rotated.z)
+            rot = quat_mul(prev_rot, lr)
         end
 
         prev_pos, prev_rot = pos, rot
     end
 
-    -- 通过 Hand 计算 Wep 坐标
+    -- 通过 Hand 计算 Wep 坐标（仍用 JSON local_offset）
     local wep_bname = side .. "_Wep"
     local wdata = skel.bones[wep_bname]
     if not wdata or not wdata.local_offset or not prev_pos or not prev_rot then return nil end
     local off = wdata.local_offset
     local rotated = quat_mul_vec(prev_rot, vec3(off[1], off[2], off[3]))
     return vec3(prev_pos.x + rotated.x, prev_pos.y + rotated.y, prev_pos.z + rotated.z)
+end
+
+-- ══════════════════════════════════════════════════════════════════
+-- 逐帧全程诊断录制 (RE9 游戏区版本)
+-- ══════════════════════════════════════════════════════════════════
+local function fmt_v(v)
+    if not v then return "nil" end
+    return string.format("(%.5f,%.5f,%.5f)", v.x, v.y, v.z)
+end
+
+local function fmt_q(q)
+    if not q then return "nil" end
+    return string.format("(%.5f,%.5f,%.5f,%.5f)", q.x, q.y, q.z, q.w)
+end
+
+local _diag_file      = nil   -- io handle
+local _diag_frame     = 0     -- 当前帧编号
+local _diag_recording = false -- 是否正在录制
+
+local function diag_open()
+    local path = "re9_game_diag_" .. os.date("%Y%m%d_%H%M%S") .. ".log"
+    _diag_file = io.open(path, "w")
+    if _diag_file then
+        _diag_frame     = 0
+        _diag_recording = true
+        _diag_file:write(string.format("=== RE9 Game Diag Start @ %s ===\n", os.date("%Y-%m-%d %H:%M:%S")))
+        _diag_file:write("Format: FRAME | CHAR bone [Game]=pos [FK]=pos | WEP name j0=pos j1=pos\n\n")
+        log.info("[WeaponSnap] RE9 Game Diag recording started: " .. path)
+    end
+end
+
+local function diag_close()
+    if _diag_file then
+        _diag_file:write(string.format("\n=== RE9 Game Diag End  (total %d frames) ===\n", _diag_frame))
+        _diag_file:close()
+        _diag_file = nil
+        log.info("[WeaponSnap] RE9 Game Diag recording stopped.")
+    end
+    _diag_recording = false
+end
+
+local function diag_write_frame()
+    if not _diag_file then return end
+    _diag_frame = _diag_frame + 1
+    local f = _diag_file
+    f:write(string.format("\n--- Frame %d ---\n", _diag_frame))
+
+    for _, char in ipairs(cached_chars) do
+        local skel = SKEL_REST[char.mapped_name]
+        f:write(string.format("CHAR %s (mapped=%s)\n", char.name, tostring(char.mapped_name)))
+
+        local function walk_chain(chain, jcache)
+            local fk_prev_pos, fk_prev_rot = nil, nil
+            for _, bname in ipairs(chain) do
+                local j = jcache[bname]
+                local game_pos  = j and sc(j, "get_Position") or nil
+                local game_rot  = j and sc(j, "get_Rotation") or nil
+                local local_rot = j and sc(j, "get_LocalRotation") or nil
+                local local_pos = j and sc(j, "get_LocalPosition") or nil
+
+                -- FK 累积（与 fk_wep_world_pos 完全一致）
+                local fk_pos, fk_rot = nil, nil
+                if bname == "root" then
+                    fk_pos = game_pos
+                    fk_rot = game_rot
+                elseif bname == "Hip" then
+                    if local_pos and local_rot and fk_prev_pos and fk_prev_rot then
+                        local rotated = quat_mul_vec(fk_prev_rot, vec3(local_pos.x, local_pos.y, local_pos.z))
+                        fk_pos = { x = fk_prev_pos.x+rotated.x, y = fk_prev_pos.y+rotated.y, z = fk_prev_pos.z+rotated.z }
+                        fk_rot = quat_mul(fk_prev_rot, local_rot)
+                    end
+                elseif skel and skel.bones[bname] and fk_prev_pos and fk_prev_rot then
+                    local bdata = skel.bones[bname]
+                    local off = bdata and bdata.local_offset
+                    if off then
+                        local rotated = quat_mul_vec(fk_prev_rot, vec3(off[1], off[2], off[3]))
+                        fk_pos = { x = fk_prev_pos.x+rotated.x, y = fk_prev_pos.y+rotated.y, z = fk_prev_pos.z+rotated.z }
+                        -- Wep 骨骼没有真实 joint，local_rot 为 nil，只算位置不传播旋转
+                        if local_rot then
+                            fk_rot = quat_mul(fk_prev_rot, local_rot)
+                        end
+                    end
+                end
+
+                f:write(string.format("  bone %-20s [Game]=%s [FK]=%s\n",
+                    bname, fmt_v(game_pos), fmt_v(fk_pos)))
+                f:write(string.format("    world_rot=%s  local_rot=%s\n",
+                    fmt_q(game_rot), fmt_q(local_rot)))
+                f:write(string.format("    local_pos=%s  fk_rot=%s\n", fmt_v(local_pos), fmt_q(fk_rot)))
+
+                if fk_pos then fk_prev_pos = fk_pos end
+                if fk_rot then fk_prev_rot = fk_rot end
+            end
+        end
+
+        if skel then
+            f:write("  -- R_chain --\n")
+            walk_chain(skel.R_chain or {}, char.r_fk_joints or {})
+            f:write("  -- L_chain --\n")
+            walk_chain(skel.L_chain or {}, char.l_fk_joints or {})
+        end
+    end
+
+    -- 武器
+    f:write("WEAPONS\n")
+    for _, wep in ipairs(cached_weapons) do
+        local p0 = wep.j0 and sc(wep.j0, "get_Position")
+        local p1 = wep.j1 and sc(wep.j1, "get_Position")
+        f:write(string.format("  %-40s j0=%s j1=%s\n", wep.name, fmt_v(p0), fmt_v(p1)))
+    end
 end
 
 local function get_char_joints(char)
@@ -534,6 +671,8 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
                 cached_chars = {}
                 _char_joints_cache = {}
                 has_scanned_this_cutscene = false
+                -- CG 结束时如正在录制则自动停止
+                if _diag_recording then diag_close() end
             end
         end
     end
@@ -547,6 +686,12 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
         log.info("[WeaponSnap] Triggering Full Scan (Entered CG)")
         force_full_scan()
         has_scanned_this_cutscene = true
+        -- 注意：诊断录制默认不自动开启，请在 UI 中手动开启
+    end
+
+    -- 每帧写入诊断数据
+    if _diag_recording then
+        diag_write_frame()
     end
 
     local occupied_hands = {}
@@ -963,6 +1108,15 @@ re.on_draw_ui(function()
         imgui.text("In Transition: " .. tostring(in_transition))
         imgui.text("Stable Frames: " .. tostring(transform_stable_frames) .. " / " .. tostring(STABILITY_THRESHOLD))
         imgui.text("--------------------------------")
+
+        -- 诊断录制开关（默认不开启，每帧写磁盘会影响性能）
+        if _diag_recording then
+            if imgui.button("■ 停止诊断录制") then diag_close() end
+        else
+            if imgui.button("● 开始诊断录制") then diag_open() end
+        end
+        imgui.same_line()
+        imgui.text_colored("(录制中会影响帧率)", _diag_recording and 0xFF0088FF or 0xFF888888)
 
         if imgui.button("Force Full Scan (Manual)") then force_full_scan() end
         imgui.same_line()
