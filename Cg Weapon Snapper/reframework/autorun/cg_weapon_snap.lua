@@ -559,58 +559,60 @@ local function diag_write_frame()
     f:write(string.format("\n--- Frame %d ---\n", _diag_frame))
 
     for _, char in ipairs(cached_chars) do
-        local skel = SKEL_REST[char.mapped_name]
-        f:write(string.format("CHAR %s (mapped=%s)\n", char.name, tostring(char.mapped_name)))
+        if check_layer_cg(char.go) then
+            local skel = SKEL_REST[char.mapped_name]
+            f:write(string.format("CHAR %s (mapped=%s)\n", char.name, tostring(char.mapped_name)))
 
-        local function walk_chain(chain, jcache)
-            local fk_prev_pos, fk_prev_rot = nil, nil
-            for _, bname in ipairs(chain) do
-                local j = jcache[bname]
-                local game_pos  = j and sc(j, "get_Position") or nil
-                local game_rot  = j and sc(j, "get_Rotation") or nil
-                local local_rot = j and sc(j, "get_LocalRotation") or nil
-                local local_pos = j and sc(j, "get_LocalPosition") or nil
+            local function walk_chain(chain, jcache)
+                local fk_prev_pos, fk_prev_rot = nil, nil
+                for _, bname in ipairs(chain) do
+                    local j = jcache[bname]
+                    local game_pos  = j and sc(j, "get_Position") or nil
+                    local game_rot  = j and sc(j, "get_Rotation") or nil
+                    local local_rot = j and sc(j, "get_LocalRotation") or nil
+                    local local_pos = j and sc(j, "get_LocalPosition") or nil
 
-                -- FK 累积（与 fk_wep_world_pos 完全一致）
-                local fk_pos, fk_rot = nil, nil
-                if bname == "root" then
-                    fk_pos = game_pos
-                    fk_rot = game_rot
-                elseif bname == "Hip" then
-                    if local_pos and local_rot and fk_prev_pos and fk_prev_rot then
-                        local rotated = quat_mul_vec(fk_prev_rot, vec3(local_pos.x, local_pos.y, local_pos.z))
-                        fk_pos = { x = fk_prev_pos.x+rotated.x, y = fk_prev_pos.y+rotated.y, z = fk_prev_pos.z+rotated.z }
-                        fk_rot = quat_mul(fk_prev_rot, local_rot)
-                    end
-                elseif skel and skel.bones[bname] and fk_prev_pos and fk_prev_rot then
-                    local bdata = skel.bones[bname]
-                    local off = bdata and bdata.local_offset
-                    if off then
-                        local rotated = quat_mul_vec(fk_prev_rot, vec3(off[1], off[2], off[3]))
-                        fk_pos = { x = fk_prev_pos.x+rotated.x, y = fk_prev_pos.y+rotated.y, z = fk_prev_pos.z+rotated.z }
-                        -- Wep 骨骼没有真实 joint，local_rot 为 nil，只算位置不传播旋转
-                        if local_rot then
+                    -- FK 累积（与 fk_wep_world_pos 完全一致）
+                    local fk_pos, fk_rot = nil, nil
+                    if bname == "root" then
+                        fk_pos = game_pos
+                        fk_rot = game_rot
+                    elseif bname == "Hip" then
+                        if local_pos and local_rot and fk_prev_pos and fk_prev_rot then
+                            local rotated = quat_mul_vec(fk_prev_rot, vec3(local_pos.x, local_pos.y, local_pos.z))
+                            fk_pos = { x = fk_prev_pos.x+rotated.x, y = fk_prev_pos.y+rotated.y, z = fk_prev_pos.z+rotated.z }
                             fk_rot = quat_mul(fk_prev_rot, local_rot)
                         end
+                    elseif skel and skel.bones[bname] and fk_prev_pos and fk_prev_rot then
+                        local bdata = skel.bones[bname]
+                        local off = bdata and bdata.local_offset
+                        if off then
+                            local rotated = quat_mul_vec(fk_prev_rot, vec3(off[1], off[2], off[3]))
+                            fk_pos = { x = fk_prev_pos.x+rotated.x, y = fk_prev_pos.y+rotated.y, z = fk_prev_pos.z+rotated.z }
+                            -- Wep 骨骼没有真实 joint，local_rot 为 nil，只算位置不传播旋转
+                            if local_rot then
+                                fk_rot = quat_mul(fk_prev_rot, local_rot)
+                            end
+                        end
                     end
+
+                    f:write(string.format("  bone %-20s [Game]=%s [FK]=%s\n",
+                        bname, fmt_v(game_pos), fmt_v(fk_pos)))
+                    f:write(string.format("    world_rot=%s  local_rot=%s\n",
+                        fmt_q(game_rot), fmt_q(local_rot)))
+                    f:write(string.format("    local_pos=%s  fk_rot=%s\n", fmt_v(local_pos), fmt_q(fk_rot)))
+
+                    if fk_pos then fk_prev_pos = fk_pos end
+                    if fk_rot then fk_prev_rot = fk_rot end
                 end
-
-                f:write(string.format("  bone %-20s [Game]=%s [FK]=%s\n",
-                    bname, fmt_v(game_pos), fmt_v(fk_pos)))
-                f:write(string.format("    world_rot=%s  local_rot=%s\n",
-                    fmt_q(game_rot), fmt_q(local_rot)))
-                f:write(string.format("    local_pos=%s  fk_rot=%s\n", fmt_v(local_pos), fmt_q(fk_rot)))
-
-                if fk_pos then fk_prev_pos = fk_pos end
-                if fk_rot then fk_prev_rot = fk_rot end
             end
-        end
 
-        if skel then
-            f:write("  -- R_chain --\n")
-            walk_chain(skel.R_chain or {}, char.r_fk_joints or {})
-            f:write("  -- L_chain --\n")
-            walk_chain(skel.L_chain or {}, char.l_fk_joints or {})
+            if skel then
+                f:write("  -- R_chain --\n")
+                walk_chain(skel.R_chain or {}, char.r_fk_joints or {})
+                f:write("  -- L_chain --\n")
+                walk_chain(skel.L_chain or {}, char.l_fk_joints or {})
+            end
         end
     end
 
