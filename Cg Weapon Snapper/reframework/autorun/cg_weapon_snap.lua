@@ -4,7 +4,7 @@
 
 local TARGET_CHARS = {"cp_A000", "ch0100", "cp_A100", "ch0200", "ch01", "ch02", 
                         "cp_A110", "cp_E900", "ch0250" ,"cp_E800",}
-local SNAP_THRESHOLD = 0.057
+local SNAP_THRESHOLD = 0.076
 local RIGHT_HAND_BIAS = 0.073
 local ENABLED = true
 local EXTRA_ITEMS = {
