@@ -250,8 +250,8 @@ local function check_layer_cg(go)
         local bank0 = layer0:call("get_MotionBankID")
         local mot0 = layer0:call("get_MotionID")
         
-        -- 判断 Bank 0 且 MotID 大于或等于0 且是 100 的倍数
-        if (bank0 == 0 and mot0 >= 0 and (mot0 % 100 == 0 or mot0 == 0)) then
+        -- 判断 Bank 0 且 MotID 大于或等于0 且是 100 的倍数，或者 mot0 == 1 (里昂举枪射击/过场待机动作)
+        if (bank0 == 0 and mot0 >= 0 and (mot0 % 100 == 0 or mot0 == 0 or mot0 == 1)) then
             return true
         end
         return false
@@ -384,20 +384,16 @@ local function scan_scene_objects(t, depth)
                     local j1 = w_joints and w_joints[1]
                     local j_muzzle = sc(cur, "getJointByName", "vfx_muzzle1")
                     local j_extra = extra_joint_name and sc(cur, "getJointByName", extra_joint_name) or nil
-                    local j0_to_j1 = nil
-                    local j0_to_muzzle = nil
-                    if j0 and j1 and j_muzzle then
-                        local p_j0  = sc(j0, "get_Position")
-                        local r_j0  = sc(j0, "get_Rotation")
-                        local p_j1  = sc(j1, "get_Position")
+                    local j_base = j1 or j0
+                    local base_to_muzzle = nil
+                    if j_base and j_muzzle then
+                        local p_base = sc(j_base, "get_Position")
+                        local r_base = sc(j_base, "get_Rotation")
                         local p_muz = sc(j_muzzle, "get_Position")
-                        if p_j0 and r_j0 and p_j1 and p_muz then
-                            local inv_r = {x=-r_j0.x, y=-r_j0.y, z=-r_j0.z, w=r_j0.w}
-                            -- scan 阶段不用 vec pool（只在初始化时调用一次，需要持久 table）
-                            j0_to_j1     = quat_mul_vec(inv_r, vec3(p_j1.x-p_j0.x, p_j1.y-p_j0.y, p_j1.z-p_j0.z))
-                            j0_to_j1     = { x = j0_to_j1.x, y = j0_to_j1.y, z = j0_to_j1.z } -- 持久化复制
-                            j0_to_muzzle = quat_mul_vec(inv_r, vec3(p_muz.x-p_j0.x, p_muz.y-p_j0.y, p_muz.z-p_j0.z))
-                            j0_to_muzzle = { x = j0_to_muzzle.x, y = j0_to_muzzle.y, z = j0_to_muzzle.z }
+                        if p_base and r_base and p_muz then
+                            local inv_r = {x=-r_base.x, y=-r_base.y, z=-r_base.z, w=r_base.w}
+                            local offset = quat_mul_vec(inv_r, vec3(p_muz.x-p_base.x, p_muz.y-p_base.y, p_muz.z-p_base.z))
+                            base_to_muzzle = { x = offset.x, y = offset.y, z = offset.z }
                         end
                     end
                     table.insert(cached_weapons, { 
@@ -407,7 +403,7 @@ local function scan_scene_objects(t, depth)
                         has_custom_joint = (extra_joint_name ~= nil),
                         is_extra=is_extra, 
                         exclusive_char=exclusive_char, 
-                        j0_to_j1=j0_to_j1, j0_to_muzzle=j0_to_muzzle, 
+                        j_base=j_base, base_to_muzzle=base_to_muzzle, 
                         snapped_to=nil, dist_to_hand=-1 
                     })
                 end
@@ -798,14 +794,13 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
                                     if pure_pos then
                                         local best_for_char, best_j_for_char, best_cp = 99999, nil, nil
 
-                                        if wep.j0_to_j1 and wep.j0_to_muzzle then
-                                            local p_j0 = sc(wep.j0, "get_Position")
-                                            local r_j0 = sc(wep.j0, "get_Rotation")
-                                            if p_j0 and r_j0 then
-                                                local v1  = quat_mul_vec(r_j0, wep.j0_to_j1)
-                                                local vmz = quat_mul_vec(r_j0, wep.j0_to_muzzle)
-                                                local seg_a = vec3(p_j0.x+v1.x,  p_j0.y+v1.y,  p_j0.z+v1.z)
-                                                local seg_b = vec3(p_j0.x+vmz.x, p_j0.y+vmz.y, p_j0.z+vmz.z)
+                                        if wep.base_to_muzzle and wep.j_base then
+                                            local p_base = sc(wep.j_base, "get_Position")
+                                            local r_base = sc(wep.j_base, "get_Rotation")
+                                            if p_base and r_base then
+                                                local vmz = quat_mul_vec(r_base, wep.base_to_muzzle)
+                                                local seg_a = vec3(p_base.x, p_base.y, p_base.z)
+                                                local seg_b = vec3(p_base.x+vmz.x, p_base.y+vmz.y, p_base.z+vmz.z)
                                                 local _, dist = closest_point_on_segment(pure_pos, seg_a, seg_b)
                                                 local cp, _ = closest_point_on_segment(snap_pos, seg_a, seg_b)
 
@@ -815,7 +810,7 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
                                                 end
 
                                                 best_for_char = effective_dist
-                                                best_j_for_char = wep.j0
+                                                best_j_for_char = wep.j_base
                                                 best_cp = cp
                                             end
                                         else
@@ -1101,7 +1096,9 @@ re.on_draw_ui(function()
                         if p_go then parent_name = tostring(sc(p_go, "get_Name") or "Unknown") end
                     end
 
-                    imgui.text(string.format("%s %s (Parent: %s) %s -> %s (D:%.3f)", status_text, wep.name, parent_name, w_pos, wep.snapped_to or "Waiting", wep.dist_to_hand))
+                    local muzz_status = wep.j_muzzle and "Y" or "N"
+                    local seg_status = wep.base_to_muzzle and "Y" or "N"
+                    imgui.text(string.format("%s %s (Parent: %s) %s -> %s (D:%.3f) [Muzz:%s Seg:%s]", status_text, wep.name, parent_name, w_pos, wep.snapped_to or "Waiting", wep.dist_to_hand, muzz_status, seg_status))
                 end
             end
         end
@@ -1194,7 +1191,9 @@ re.on_draw_ui(function()
                 local w_data = {
                     name = w.name,
                     snapped_to = w.snapped_to,
-                    dist = w.dist_to_hand
+                    dist = w.dist_to_hand,
+                    has_seg = (w.base_to_muzzle ~= nil),
+                    has_muzzle = (w.j_muzzle ~= nil)
                 }
                 local p = sc(w.transform, "get_Position")
                 if p then w_data.pos = {x=p.x, y=p.y, z=p.z} end

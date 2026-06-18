@@ -1,23 +1,43 @@
--- cg_weapon_snap.lua
+﻿-- cg_weapon_snap.lua
 -- CG武器吸附右手脚本
--- 策略：钩子负责标记"过场状态"，轮询负责扫场景，完全解耦
+-- 策略：钩子负责标记过场状态，轮询负责扫描场景，完全解耦
 
 local TARGET_CHARS = {"ch0a0z0", "ch2a1z0", "ch2a200", "ch2a3z0", "ch3a8z0", "ch1b7z0"}
-local SNAP_THRESHOLD = 0.085
+local SNAP_THRESHOLD = 0.1
 local RIGHT_HAND_BIAS = 0.073
 local ENABLED = true
 local EXTRA_ITEMS = {
-    -- { "物品名", "骨骼名", "目标角色" },
+    -- 格式：{ "物品名", "骨骼名", "目标角色", {骨骼局部偏移 x,y,z} }
+    -- 第3项（目标角色）可省略或填 nil，表示不限定角色
+    -- 第4项（骨骼局部偏移）可省略，表示直接用骨骼原点判断距离
+    --   偏移在该骨骼的局部坐标系下定义，会随物体旋转自动转换为世界坐标
+    -- { "物品名", "骨骼名", "目标角色", {ox, oy, oz} },
     -- { "物品名", "骨骼名" },
     -- { "物品名" },
 
     { "ac0000_00_00", "_00" },
     { "sm78_702_00", "_00" },
+    { "sm61_587_00", "_00" },
+    { "sm61_649_00", "_00" },
+    { "sm61_579_00", "_00", nil, {0.02, 0.0, 0.0} },
+    { "sm61_547_00", "_00", nil, {-0.000068, 0.000493, -0.042006} },
+    { "sm61_547_01", "_00", nil, {-0.000068, 0.000493, -0.042006} }, 
+    { "sm61_591_00", "_00" },
+    { "sm61_347_00", "_00", nil, {0.1, -0.01, 0.0} },
+    { "sm61_630_00", "_00", nil, {-0.03, 0.0, 0.0}},
+    { "sm61_630_01", "_00", nil, {0.04, 0.0, 0.0}},
+    { "sm74_524_00", "_00", nil, {0.0, 0.05, 0.0}},
+    { "sm61_549_00", "_00" },
+    { "sm61_541_00", "_00", nil, {0.1, -0.01, 0.0} },  -- 钩锁枪：填写握把处相对 _00 的局部偏移
+    { "sm61_576_00", "_00" },
+    { "sm61_309_00", "_00", nil, {-0.015, -0.005, 0.0} },
     
 }
 
 local ACCESSORY_RULES = {
-    -- 你可以在这里添加更多，格式：{ wep = "武器名", acc = "配件名", joints = {"首选骨骼", "备选骨骼..."} }
+    -- 你可以在这里添加更多，格式：{ wep = "武器名", acc = "配件名", joints = {"首选骨骼", "备选骨骼".."} }
+    { wep = "wp4000", acc = "wp4090", joints = {"_00"} },
+
 }
 
 local cached_weapons = {}
@@ -26,10 +46,11 @@ local in_cutscene = false
 local last_scan_time = 0
 local has_scanned_this_cutscene = false
 local cutscene_start_time = 0      -- in_cutscene 第一次变 true 的时间
+local _need_char_rescan = false     -- 角色骨骼失效时触发重扫（不清水武器缓存）
 
 local ACTIVATION_DELAY = 0.0       -- 进入 CG 后等待 N 秒再开始操作
 local DEACTIVATION_DELAY = 0.0     -- CG 结束后持续吸附 N 秒
-local LAYER_CG_PERSIST = 0.0       -- LayerCG 持续超过此秒数才认定为 CG
+local LAYER_CG_PERSIST = 0.0       -- LayerCG 持续超过此帧数才认定为 CG
 
 local layer_cg_true_since = 0      -- LayerCG 开始为 true 的时间
 local layer_cg_was_true = false    -- 上一帧 LayerCG 是否为 true
@@ -44,20 +65,20 @@ local SKEL_REST = {
         L_chain = {"root","Hip","Spine_0","Spine_1","Spine_2","L_Shoulder","L_UpperArm","L_Forearm","L_Hand","L_Wep"},
         bones = {
             root           = { local_offset = {-0.0, 0.0, 0.0}, local_rest_rot = {0.707107, 0.0, 0.0, 0.707107} },
-            Hip            = { local_offset = {0.0, 0.99882, 0.0}, local_rest_rot = {0.0, 0.0, 0.0, 1.0} },
-            Spine_0        = { local_offset = {0.0, 0.0, -0.0}, local_rest_rot = {-0.000444, 0.0, 0.0, 1.0} },
+            Hip            = { local_offset = {0.0, 0.99882, -0.0}, local_rest_rot = {0.0, 0.0, 0.0, 1.0} },
+            Spine_0        = { local_offset = {0.0, 0.0, 0.0}, local_rest_rot = {-0.000444, 0.0, 0.0, 1.0} },
             Spine_1        = { local_offset = {-0.0, 0.161447, 0.0}, local_rest_rot = {-0.059427, 0.0, 0.0, 0.998233} },
-            Spine_2        = { local_offset = {-0.0, 0.161341, -0.0}, local_rest_rot = {0.002507, 0.0, 0.0, 0.999997} },
-            R_Shoulder     = { local_offset = {-0.036476, 0.138379, 0.054999}, local_rest_rot = {-0.011376, 0.08641, 0.130029, 0.987672} },
+            Spine_2        = { local_offset = {-0.0, 0.161341, 0.0}, local_rest_rot = {0.002506, 0.0, 0.0, 0.999997} },
+            R_Shoulder     = { local_offset = {-0.036476, 0.138379, 0.054999}, local_rest_rot = {-0.011376, 0.08641, 0.13003, 0.987672} },
             R_UpperArm     = { local_offset = {-0.141675, 0.005581, -0.049021}, local_rest_rot = {0.21479, 0.104869, 0.162034, 0.957399} },
-            R_Forearm      = { local_offset = {-0.277009, 0.0, 0.0}, local_rest_rot = {-0.0, 0.407672, -0.0, 0.913128} },
-            R_Hand         = { local_offset = {-0.263651, -0.0, -0.0}, local_rest_rot = {0.110657, -0.010368, -0.059459, 0.992024} },
-            R_Wep          = { local_offset = {-0.045823, -0.00813, 0.000418}, local_rest_rot = {-0.0, 0.0, -0.0, 1.0} },
+            R_Forearm      = { local_offset = {-0.277009, 0.0, 0.0}, local_rest_rot = {0.0, 0.407672, -0.0, 0.913128} },
+            R_Hand         = { local_offset = {-0.263651, -0.0, -0.0}, local_rest_rot = {0.110658, -0.010367, -0.05946, 0.992024} },
+            R_Wep          = { local_offset = {-0.076475, -0.02557, 0.008051}, local_rest_rot = {-0.0, 0.0, -0.0, 1.0} },
             L_Shoulder     = { local_offset = {0.036476, 0.138379, 0.054999}, local_rest_rot = {-0.011376, -0.08641, -0.130029, 0.987672} },
             L_UpperArm     = { local_offset = {0.141675, 0.005581, -0.049021}, local_rest_rot = {0.21479, -0.104869, -0.162034, 0.957399} },
-            L_Forearm      = { local_offset = {0.277009, 0.0, 0.0}, local_rest_rot = {0.0, -0.407673, -1e-06, 0.913128} },
+            L_Forearm      = { local_offset = {0.277009, 0.0, 0.0}, local_rest_rot = {0.0, -0.407673, -0.0, 0.913128} },
             L_Hand         = { local_offset = {0.263651, 0.0, -0.0}, local_rest_rot = {0.110658, 0.010367, 0.05946, 0.992024} },
-            L_Wep          = { local_offset = {0.045823, -0.00813, 0.000418}, local_rest_rot = {0.0, 0.0, 0.0, 1.0} }
+            L_Wep          = { local_offset = {0.076475, -0.02557, 0.008051}, local_rest_rot = {-0.0, -0.0, 0.0, 1.0} }
         }
     },
 
@@ -66,20 +87,20 @@ local SKEL_REST = {
         L_chain = {"root","Hip","Spine_0","Spine_1","Spine_2","L_Shoulder","L_UpperArm","L_Forearm","L_Hand","L_Wep"},
         bones = {
             root           = { local_offset = {-0.0, 0.0, 0.0}, local_rest_rot = {0.707107, 0.0, 0.0, 0.707107} },
-            Hip            = { local_offset = {0.0, 0.99882, 0.0}, local_rest_rot = {0.0, 0.0, 0.0, 1.0} },
-            Spine_0        = { local_offset = {0.0, 0.0, -0.0}, local_rest_rot = {-0.000444, 0.0, 0.0, 1.0} },
+            Hip            = { local_offset = {0.0, 0.99882, -0.0}, local_rest_rot = {0.0, 0.0, 0.0, 1.0} },
+            Spine_0        = { local_offset = {0.0, 0.0, 0.0}, local_rest_rot = {-0.000444, 0.0, 0.0, 1.0} },
             Spine_1        = { local_offset = {-0.0, 0.161447, 0.0}, local_rest_rot = {-0.059427, 0.0, 0.0, 0.998233} },
-            Spine_2        = { local_offset = {-0.0, 0.161341, -0.0}, local_rest_rot = {0.002507, 0.0, 0.0, 0.999997} },
-            R_Shoulder     = { local_offset = {-0.036476, 0.138379, 0.054999}, local_rest_rot = {-0.011376, 0.08641, 0.130029, 0.987672} },
+            Spine_2        = { local_offset = {-0.0, 0.161341, 0.0}, local_rest_rot = {0.002506, 0.0, 0.0, 0.999997} },
+            R_Shoulder     = { local_offset = {-0.036476, 0.138379, 0.054999}, local_rest_rot = {-0.011376, 0.08641, 0.13003, 0.987672} },
             R_UpperArm     = { local_offset = {-0.141675, 0.005581, -0.049021}, local_rest_rot = {0.21479, 0.104869, 0.162034, 0.957399} },
-            R_Forearm      = { local_offset = {-0.277009, 0.0, 0.0}, local_rest_rot = {-0.0, 0.407672, -0.0, 0.913128} },
-            R_Hand         = { local_offset = {-0.263651, -0.0, -0.0}, local_rest_rot = {0.110657, -0.010368, -0.059459, 0.992024} },
-            R_Wep          = { local_offset = {-0.045823, -0.00813, 0.000418}, local_rest_rot = {-0.0, 0.0, -0.0, 1.0} },
+            R_Forearm      = { local_offset = {-0.277009, 0.0, 0.0}, local_rest_rot = {0.0, 0.407672, -0.0, 0.913128} },
+            R_Hand         = { local_offset = {-0.263651, -0.0, -0.0}, local_rest_rot = {0.110658, -0.010367, -0.05946, 0.992024} },
+            R_Wep          = { local_offset = {-0.076475, -0.02557, 0.008051}, local_rest_rot = {-0.0, 0.0, -0.0, 1.0} },
             L_Shoulder     = { local_offset = {0.036476, 0.138379, 0.054999}, local_rest_rot = {-0.011376, -0.08641, -0.130029, 0.987672} },
             L_UpperArm     = { local_offset = {0.141675, 0.005581, -0.049021}, local_rest_rot = {0.21479, -0.104869, -0.162034, 0.957399} },
-            L_Forearm      = { local_offset = {0.277009, 0.0, 0.0}, local_rest_rot = {0.0, -0.407673, -1e-06, 0.913128} },
+            L_Forearm      = { local_offset = {0.277009, 0.0, 0.0}, local_rest_rot = {0.0, -0.407673, -0.0, 0.913128} },
             L_Hand         = { local_offset = {0.263651, 0.0, -0.0}, local_rest_rot = {0.110658, 0.010367, 0.05946, 0.992024} },
-            L_Wep          = { local_offset = {0.045823, -0.00813, 0.000418}, local_rest_rot = {0.0, 0.0, 0.0, 1.0} }
+            L_Wep          = { local_offset = {0.076475, -0.02557, 0.008051}, local_rest_rot = {-0.0, -0.0, 0.0, 1.0} }
         }
     },
 
@@ -87,21 +108,21 @@ local SKEL_REST = {
         R_chain = {"root","Hip","Spine_0","Spine_1","Spine_2","R_Shoulder","R_UpperArm","R_Forearm","R_Hand","R_Wep"},
         L_chain = {"root","Hip","Spine_0","Spine_1","Spine_2","L_Shoulder","L_UpperArm","L_Forearm","L_Hand","L_Wep"},
         bones = {
-            root           = { local_offset = {0.0, 0.0191, 0.0}, local_rest_rot = {0.707107, 0.0, 0.0, 0.707107} },
-            Hip            = { local_offset = {0.0, 1.007, 0.0}, local_rest_rot = {0.0, 0.0, 0.0, 1.0} },
+            root           = { local_offset = {0.0, 0.0191, -0.0}, local_rest_rot = {0.707107, 0.0, 0.0, 0.707107} },
+            Hip            = { local_offset = {0.0, 1.007, -0.0}, local_rest_rot = {0.0, 0.0, 0.0, 1.0} },
             Spine_0        = { local_offset = {0.0, 0.0, 0.0}, local_rest_rot = {0.042049, 0.0, 0.0, 0.999116} },
             Spine_1        = { local_offset = {0.0, 0.1373, 0.007}, local_rest_rot = {-0.072344, 0.0, 0.0, 0.99738} },
             Spine_2        = { local_offset = {0.0, 0.1048, -0.0225}, local_rest_rot = {-0.02705, 0.0, 0.0, 0.999634} },
             R_Shoulder     = { local_offset = {-0.0365, 0.1384, 0.055}, local_rest_rot = {-0.011376, 0.08641, 0.130029, 0.987672} },
             R_UpperArm     = { local_offset = {-0.0938, 0.02, -0.0455}, local_rest_rot = {0.143845, 0.045343, 0.228107, 0.961883} },
-            R_Forearm      = { local_offset = {-0.2786, 0.0, 0.0}, local_rest_rot = {0.0, 0.470498, 0.0, 0.882401} },
-            R_Hand         = { local_offset = {-0.2213, 0.0, 0.0}, local_rest_rot = {0.312546, 0.006662, 0.060011, 0.947982} },
-            R_Wep          = { local_offset = {-0.047279, -0.005032, -0.001852}, local_rest_rot = {0.0, 0.0, 0.0, 1.0} },
+            R_Forearm      = { local_offset = {-0.2786, 0.0, 0.0}, local_rest_rot = {0.0, 0.470498, -0.0, 0.882401} },
+            R_Hand         = { local_offset = {-0.2213, -0.0, -0.0}, local_rest_rot = {0.312546, 0.006661, 0.06001, 0.947982} },
+            R_Wep          = { local_offset = {-0.071431, -0.027039, 0.001306}, local_rest_rot = {-0.0, 0.0, 0.0, 1.0} },
             L_Shoulder     = { local_offset = {0.0365, 0.1384, 0.055}, local_rest_rot = {-0.011376, -0.08641, -0.130029, 0.987672} },
-            L_UpperArm     = { local_offset = {0.0938, 0.02, -0.0455}, local_rest_rot = {0.143845, -0.045343, -0.228107, 0.961883} },
-            L_Forearm      = { local_offset = {0.2786, 0.0, 0.0}, local_rest_rot = {0.0, -0.470498, 0.0, 0.882401} },
-            L_Hand         = { local_offset = {0.2213, 0.0, 0.0}, local_rest_rot = {0.312546, -0.006661, -0.060011, 0.947982} },
-            L_Wep          = { local_offset = {0.047279, -0.005032, -0.001852}, local_rest_rot = {0.0, 0.0, 0.0, 1.0} }
+            L_UpperArm     = { local_offset = {0.0938, 0.02, -0.0455}, local_rest_rot = {0.143845, -0.045343, -0.228107, 0.961884} },
+            L_Forearm      = { local_offset = {0.2786, 0.0, 0.0}, local_rest_rot = {0.0, -0.470498, 1e-06, 0.882401} },
+            L_Hand         = { local_offset = {0.2213, -0.0, 0.0}, local_rest_rot = {0.312545, -0.006662, -0.06001, 0.947982} },
+            L_Wep          = { local_offset = {0.071431, -0.027039, 0.001306}, local_rest_rot = {-0.0, -0.0, -0.0, 1.0} }
         }
     },
 
@@ -109,21 +130,21 @@ local SKEL_REST = {
         R_chain = {"root","Hip","Spine_0","Spine_1","Spine_2","R_Shoulder","R_UpperArm","R_Forearm","R_Hand","R_Wep"},
         L_chain = {"root","Hip","Spine_0","Spine_1","Spine_2","L_Shoulder","L_UpperArm","L_Forearm","L_Hand","L_Wep"},
         bones = {
-            root           = { local_offset = {0.0, -0.017, 0.0}, local_rest_rot = {0.707107, 0.0, 0.0, 0.707107} },
-            Hip            = { local_offset = {0.0, 1.015, 0.0}, local_rest_rot = {0.0, 0.0, 0.0, 1.0} },
+            root           = { local_offset = {0.0, 0.0, 0.0}, local_rest_rot = {0.707107, 0.0, 0.0, 0.707107} },
+            Hip            = { local_offset = {0.0, 1.015, 0.017}, local_rest_rot = {0.0, 0.0, 0.0, 1.0} },
             Spine_0        = { local_offset = {0.0, 0.0, 0.0}, local_rest_rot = {0.043619, 0.0, 0.0, 0.999048} },
             Spine_1        = { local_offset = {0.0, 0.13703, 0.0}, local_rest_rot = {-0.087156, 0.0, 0.0, 0.996195} },
             Spine_2        = { local_offset = {0.0, 0.115, 0.0}, local_rest_rot = {0.043619, 0.0, 0.0, 0.999048} },
             R_Shoulder     = { local_offset = {-0.036476, 0.133308, 0.0184}, local_rest_rot = {-0.041785, 0.081187, 0.088306, 0.9919} },
-            R_UpperArm     = { local_offset = {-0.09057, 0.00223, -0.05981}, local_rest_rot = {0.145144, 0.030392, 0.282606, 0.947704} },
-            R_Forearm      = { local_offset = {-0.2786, 0.0, 0.0}, local_rest_rot = {0.0, 0.438371, -1e-06, 0.898794} },
-            R_Hand         = { local_offset = {-0.2213, 0.0, 0.0}, local_rest_rot = {0.32561, 0.061699, -0.035054, 0.942837} },
-            R_Wep          = { local_offset = {-0.045704, -0.001207, -0.003313}, local_rest_rot = {0.0, 0.0, -1e-06, 1.0} },
+            R_UpperArm     = { local_offset = {-0.090573, 0.002227, -0.059805}, local_rest_rot = {0.145144, 0.030392, 0.282606, 0.947704} },
+            R_Forearm      = { local_offset = {-0.2786, 0.0, -0.0}, local_rest_rot = {-0.0, 0.438371, 0.0, 0.898794} },
+            R_Hand         = { local_offset = {-0.2213, 0.0, -0.0}, local_rest_rot = {0.325611, 0.061699, -0.035055, 0.942837} },
+            R_Wep          = { local_offset = {-0.06219, -0.020736, 0.002}, local_rest_rot = {0.0, -0.0, 0.0, 1.0} },
             L_Shoulder     = { local_offset = {0.036476, 0.133308, 0.0184}, local_rest_rot = {-0.041785, -0.081187, -0.088306, 0.9919} },
             L_UpperArm     = { local_offset = {0.090573, 0.002226, -0.059805}, local_rest_rot = {0.145144, -0.030392, -0.282606, 0.947704} },
-            L_Forearm      = { local_offset = {0.2786, 0.0, 0.0}, local_rest_rot = {1e-06, -0.438371, 1e-06, 0.898794} },
-            L_Hand         = { local_offset = {0.2213, 0.0, 0.0}, local_rest_rot = {0.32561, -0.061699, 0.035054, 0.942837} },
-            L_Wep          = { local_offset = {0.045704, -0.001207, -0.003313}, local_rest_rot = {0.0, 0.0, 1e-06, 1.0} }
+            L_Forearm      = { local_offset = {0.2786, 0.0, 0.0}, local_rest_rot = {0.0, -0.438371, 0.0, 0.898794} },
+            L_Hand         = { local_offset = {0.2213, 0.0, -0.0}, local_rest_rot = {0.325611, -0.061699, 0.035055, 0.942837} },
+            L_Wep          = { local_offset = {0.06219, -0.020736, 0.002}, local_rest_rot = {0.0, -0.0, -0.0, 1.0} }
         }
     },
 
@@ -134,41 +155,41 @@ local SKEL_REST = {
             root           = { local_offset = {0.0, 0.0, 0.0}, local_rest_rot = {0.707107, 0.0, 0.0, 0.707107} },
             Hip            = { local_offset = {0.0, 1.048761, 0.0}, local_rest_rot = {0.0, 0.0, 0.0, 1.0} },
             Spine_0        = { local_offset = {0.0, 0.0, 0.0}, local_rest_rot = {-0.000444, 0.0, 0.0, 1.0} },
-            Spine_1        = { local_offset = {0.0, 0.16952, 0.0}, local_rest_rot = {-0.059427, 0.0, 0.0, 0.998233} },
+            Spine_1        = { local_offset = {-0.0, 0.16952, 0.0}, local_rest_rot = {-0.059427, 0.0, 0.0, 0.998233} },
             Spine_2        = { local_offset = {0.0, 0.177213, 0.001918}, local_rest_rot = {0.002507, 0.0, 0.0, 0.999997} },
             R_Shoulder     = { local_offset = {-0.036476, 0.138379, 0.054999}, local_rest_rot = {0.041159, 0.029853, 0.085905, 0.995005} },
-            R_UpperArm     = { local_offset = {-0.156, 0.0, -0.065}, local_rest_rot = {0.061261, 0.060049, 0.346351, 0.934175} },
-            R_Forearm      = { local_offset = {-0.315, 0.0, 0.0}, local_rest_rot = {0.0, 0.370557, 0.0, 0.92881} },
-            R_Hand         = { local_offset = {-0.265, 0.0, 0.0}, local_rest_rot = {0.131831, 0.038669, -0.040258, 0.989699} },
-            R_Wep          = { local_offset = {-0.045589, -0.011109, 0.009372}, local_rest_rot = {0.0, 0.0, 1e-06, 1.0} },
+            R_UpperArm     = { local_offset = {-0.156, 0.0, -0.065}, local_rest_rot = {0.061261, 0.060049, 0.34635, 0.934175} },
+            R_Forearm      = { local_offset = {-0.315, -0.0, -0.0}, local_rest_rot = {-0.0, 0.370557, 0.0, 0.92881} },
+            R_Hand         = { local_offset = {-0.265, 0.0, 0.0}, local_rest_rot = {0.131832, 0.038669, -0.040258, 0.989699} },
+            R_Wep          = { local_offset = {-0.080988, -0.032179, 0.014334}, local_rest_rot = {0.0, 0.0, -0.0, 1.0} },
             L_Shoulder     = { local_offset = {0.036476, 0.138379, 0.054999}, local_rest_rot = {0.041159, -0.029853, -0.085905, 0.995005} },
-            L_UpperArm     = { local_offset = {0.156, 0.0, -0.065}, local_rest_rot = {0.061261, -0.060049, -0.346351, 0.934175} },
-            L_Forearm      = { local_offset = {0.315, 0.0, 0.0}, local_rest_rot = {0.0, -0.370557, 0.0, 0.92881} },
-            L_Hand         = { local_offset = {0.265, 0.0, 0.0}, local_rest_rot = {0.131831, -0.038669, 0.040257, 0.989699} },
-            L_Wep          = { local_offset = {0.045589, -0.011109, 0.009372}, local_rest_rot = {0.0, 0.0, 0.0, 1.0} }
+            L_UpperArm     = { local_offset = {0.156, -0.0, -0.065}, local_rest_rot = {0.061261, -0.060049, -0.34635, 0.934175} },
+            L_Forearm      = { local_offset = {0.315, -0.0, 0.0}, local_rest_rot = {-0.0, -0.370557, -0.0, 0.92881} },
+            L_Hand         = { local_offset = {0.265, 0.0, 0.0}, local_rest_rot = {0.131832, -0.038669, 0.040258, 0.989699} },
+            L_Wep          = { local_offset = {0.080989, -0.032179, 0.014334}, local_rest_rot = {0.0, 0.0, 0.0, 1.0} }
         }
     }
 }
 
 
--- ══════════════════════════════════════════════════════════════════
+-- ─────────────────────────────────────────────────────────────────
 -- 性能优化：缓存 sdk 类型查找结果（避免每帧重复查找）
--- ══════════════════════════════════════════════════════════════════
+-- ─────────────────────────────────────────────────────────────────
 local type_SceneManager = sdk.find_type_definition("via.SceneManager")
 local typeof_Motion = sdk.typeof("via.motion.Motion")
 
--- ══════════════════════════════════════════════════════════════════
--- 性能优化：sc() 无闭包版本 —— 直接传函数引用给 pcall
--- ══════════════════════════════════════════════════════════════════
+-- ─────────────────────────────────────────────────────────────────
+-- 性能优化：sc() 无限制版 -- 直接传入函数引用给 pcall
+-- ─────────────────────────────────────────────────────────────────
 local function sc(obj, method, ...)
     if not obj then return nil end
     local ok, r = pcall(function(...) return obj:call(method, ...) end, ...)
     return ok and r or nil
 end
 
--- ══════════════════════════════════════════════════════════════════
+-- ─────────────────────────────────────────────────────────────────
 -- 性能优化：可复用临时 table 池（避免热循环中大量 {x=,y=,z=} 分配）
--- ══════════════════════════════════════════════════════════════════
+-- ─────────────────────────────────────────────────────────────────
 local _vec_pool = {}
 local _vec_pool_idx = 0
 
@@ -223,9 +244,9 @@ local function closest_point_on_segment(p, a, b)
     return vec3(cpx, cpy, cpz), math.sqrt(dx*dx+dy*dy+dz*dz)
 end
 
--- ══════════════════════════════════════════════════════════════════
+-- ─────────────────────────────────────────────────────────────────
 -- 性能优化：缓存角色名 -> mapped_name 映射（避免每帧重复字符串匹配）
--- ══════════════════════════════════════════════════════════════════
+-- ─────────────────────────────────────────────────────────────────
 local _char_mapped_name_cache = {}
 
 local function get_mapped_name(char_name)
@@ -252,7 +273,7 @@ local function is_attached_to_char(t)
     return false
 end
 
--- ══════════════════════════════════════════════════════════════════
+-- ─────────────────────────────────────────────────────────────────
 
 local typeof_Motion = sdk.typeof("via.motion.ActorMotion")
 local function check_layer_cg(go)
@@ -268,7 +289,7 @@ local function check_layer_cg(go)
         local bank0 = layer0:call("get_MotionBankID")
         local mot0 = layer0:call("get_MotionID")
         
-        -- 判断 Bank 0 且 MotID 大于或等于0 且是 100 的倍数
+        -- 判断 Bank 0 且 MotID 大于或等于 1 旦是 100 的倍数
         if (bank0 == 0 and (mot0 ~= -1 and mot0 ~= 4294967295)) then
             return true
         end
@@ -277,12 +298,12 @@ local function check_layer_cg(go)
     return ok and result == true
 end
 -- 极简 CG 检测逻辑：直接读取 GuiManager 的 canDemoSkip
--- ══════════════════════════════════════════════════════════════════
+-- ─────────────────────────────────────────────────────────────────
 local gui_field_canDemoSkip = nil
 local function check_if_in_cg()
     local gui_mgr = sdk.get_managed_singleton(sdk.game_namespace("GuiManager"))
     if gui_mgr then
-        -- 优先检查 IsPlayingEvent (RE4 专用)
+        -- 优先检测 IsPlayingEvent（RE4 专用）
         local ok_event, is_event = pcall(function() return gui_mgr:call("get_IsPlayingEvent") end)
         if ok_event and is_event ~= nil then
             return is_event == true
@@ -304,9 +325,9 @@ local function check_if_in_cg()
     return false
 end
 
--- ══════════════════════════════════════════════════════════════════
+-- ─────────────────────────────────────────────────────────────────
 -- 性能优化：缓存 hand_key 字符串（避免热循环中每帧字符串拼接）
--- ══════════════════════════════════════════════════════════════════
+-- ─────────────────────────────────────────────────────────────────
 local _hand_key_cache = {}
 
 local function get_hand_key(char_name, joint_name)
@@ -336,7 +357,7 @@ local function scan_scene_objects(t, depth)
             for _, cname in ipairs(TARGET_CHARS) do
                 if name:find(cname) then
                     is_char = true
-                    -- RE4 暂时不检查父级
+                    -- RE4 暂时不检查主线
                     --[[
                     local p_t = sc(cur, "get_Parent")
                     if p_t then
@@ -383,27 +404,7 @@ local function scan_scene_objects(t, depth)
                             char_entry.l_fk_joints[bname] = j
                         end
 
-                        -- 计算 ADD_OFFSET：R_Wep 父级相对于 R_Hand 的局部空间偏移（掃描阶段一次性计算）
-                        local function calc_add_offset(wep_j, hand_j)
-                            if not wep_j or not hand_j then return {x=0,y=0,z=0} end
-                            local wep_parent = sc(wep_j, "get_Parent")
-                            if not wep_parent then return {x=0,y=0,z=0} end
-                            -- 如果 R_Wep 的父级就是 R_Hand 则 ADD_OFFSET = 0
-                            local parent_go = sc(wep_parent, "get_GameObject")
-                            local hand_go   = sc(hand_j, "get_GameObject")
-                            if parent_go == hand_go then return {x=0,y=0,z=0} end
-                            -- 父级不是 R_Hand，计算父级世界坐标在 R_Hand 局部空间中的偏移
-                            local p_parent = sc(wep_parent, "get_Position")
-                            local p_hand   = sc(hand_j, "get_Position")
-                            local r_hand   = sc(hand_j, "get_Rotation")
-                            if not p_parent or not p_hand or not r_hand then return {x=0,y=0,z=0} end
-                            local dx, dy, dz = p_parent.x-p_hand.x, p_parent.y-p_hand.y, p_parent.z-p_hand.z
-                            local inv_r = {x=-r_hand.x, y=-r_hand.y, z=-r_hand.z, w=r_hand.w}
-                            local local_off = quat_mul_vec(inv_r, vec3(dx, dy, dz))
-                            return {x=local_off.x, y=local_off.y, z=local_off.z}
-                        end
-                        char_entry.r_add_offset = calc_add_offset(j_rwep, j_rhand)
-                        char_entry.l_add_offset = calc_add_offset(j_lwep, j_lhand)
+                        -- （移除了静态的 calc_add_offset 逻辑，改为每帧动态计算）
                     end
 
                     table.insert(cached_chars, char_entry)
@@ -413,18 +414,20 @@ local function scan_scene_objects(t, depth)
             local is_extra = false
             local extra_joint_name = nil
             local exclusive_char = nil
+            local extra_joint_offset = nil  -- 第4参数：骨骼局部坐标偏移
             for _, item in ipairs(EXTRA_ITEMS) do
                 if name:find(item[1]) then
                     is_extra = true
                     extra_joint_name = item[2]
                     exclusive_char = item[3]
+                    extra_joint_offset = item[4]  -- 可能为 nil
                     break
                 end
             end
 
             local is_wep = lower_name:sub(1, 2) == "wp"
             if (is_wep or is_extra) and not is_char then
-                -- 增加 Parent 限制：None 或者 包含 ch0a0z0
+                -- 增加 Parent 限制：None 或者包含 ch0a0z0
                 local p_t = sc(cur, "get_Parent")
                 local p_name = "None"
                 if p_t then
@@ -441,30 +444,28 @@ local function scan_scene_objects(t, depth)
                     local j1 = w_joints and w_joints[1]
                     local j_muzzle = sc(cur, "getJointByName", "vfx_muzzle1")
                     local j_extra = extra_joint_name and sc(cur, "getJointByName", extra_joint_name) or nil
-                    local j0_to_j1 = nil
-                    local j0_to_muzzle = nil
-                    if j0 and j1 and j_muzzle then
-                        local p_j0  = sc(j0, "get_Position")
-                        local r_j0  = sc(j0, "get_Rotation")
-                        local p_j1  = sc(j1, "get_Position")
+                    local j_base = j1 or j0
+                    local base_to_muzzle = nil
+                    if j_base and j_muzzle then
+                        local p_base = sc(j_base, "get_Position")
+                        local r_base = sc(j_base, "get_Rotation")
                         local p_muz = sc(j_muzzle, "get_Position")
-                        if p_j0 and r_j0 and p_j1 and p_muz then
-                            local inv_r = {x=-r_j0.x, y=-r_j0.y, z=-r_j0.z, w=r_j0.w}
-                            -- scan 阶段不用 vec pool（只在初始化时调用一次，需要持久 table）
-                            j0_to_j1     = quat_mul_vec(inv_r, vec3(p_j1.x-p_j0.x, p_j1.y-p_j0.y, p_j1.z-p_j0.z))
-                            j0_to_j1     = { x = j0_to_j1.x, y = j0_to_j1.y, z = j0_to_j1.z } -- 持久化复制
-                            j0_to_muzzle = quat_mul_vec(inv_r, vec3(p_muz.x-p_j0.x, p_muz.y-p_j0.y, p_muz.z-p_j0.z))
-                            j0_to_muzzle = { x = j0_to_muzzle.x, y = j0_to_muzzle.y, z = j0_to_muzzle.z }
+                        if p_base and r_base and p_muz then
+                            local inv_r = {x=-r_base.x, y=-r_base.y, z=-r_base.z, w=r_base.w}
+                            local offset = quat_mul_vec(inv_r, vec3(p_muz.x-p_base.x, p_muz.y-p_base.y, p_muz.z-p_base.z))
+                            base_to_muzzle = { x = offset.x, y = offset.y, z = offset.z }
                         end
                     end
                     table.insert(cached_weapons, { 
                         name=name, go=go, transform=cur, 
                         j0=j0, j1=j1, j_muzzle=j_muzzle, 
                         j_extra=j_extra, 
+                        j_extra_local_off = extra_joint_offset,  -- {x,y,z} 或 nil
                         has_custom_joint = (extra_joint_name ~= nil),
-                        is_extra=is_extra, 
+                        custom_joint_name = extra_joint_name,
+                        is_extra=is_extra,
                         exclusive_char=exclusive_char, 
-                        j0_to_j1=j0_to_j1, j0_to_muzzle=j0_to_muzzle, 
+                        j_base=j_base, base_to_muzzle=base_to_muzzle, 
                         snapped_to=nil, dist_to_hand=-1 
                     })
                 end
@@ -495,9 +496,9 @@ local function force_full_scan()
     full_scene_scan()
 end
 
--- ══════════════════════════════════════════════════════════════════
+-- ─────────────────────────────────────────────────────────────────
 -- 预构建每个角色的关节信息表（避免热循环中每帧创建 joints table）
--- ══════════════════════════════════════════════════════════════════
+-- ─────────────────────────────────────────────────────────────────
 local _char_joints_cache = {}   -- char.transform -> { {name, wep_j, hand_j, base_off}, ... }
 
 -- 四元数乘法：q1 * q2
@@ -518,35 +519,36 @@ local function fk_wep_world_pos(char, side)
     local jcache = (side == "R") and char.r_fk_joints or char.l_fk_joints
 
     local prev_pos, prev_rot = nil, nil
+    local hand_pos = nil
 
     for i, bname in ipairs(chain) do
         local j = jcache[bname]
+        -- 动态重试：扫描时骨骼可能还未初始化，每帧补充获取
+        if not j and bname ~= "root" then
+            j = sc(char.transform, "getJointByName", bname)
+            if j then jcache[bname] = j end
+        end
         if not j then return nil end
 
-        local bdata    = skel.bones[bname]
-        local rest_rot = bdata and bdata.local_rest_rot
         local pos, rot
 
         if bname == "root" then
-            -- Root：直接使用世界坐标和世界旋转
             pos = sc(j, "get_Position")
             rot = sc(j, "get_Rotation")
             if not pos or not rot then return nil end
 
         elseif bname == "Hip" then
-            -- Hip：位移用 get_LocalPosition()（动画/IK 驱动，合法大位移）
-            --      旋转用 get_LocalRotation()（local_rot 已含 rest_rot，直接乘）
-            local lp = sc(j, "get_LocalPosition")
-            local lr = sc(j, "get_LocalRotation")
-            if not lp or not lr or not prev_pos or not prev_rot then return nil end
+            -- Hip：使用游戏的局部坐标，以兼容 Mod 对根骨骼高度/位移的修改
+            local local_pos = sc(j, "get_LocalPosition")
+            local lr  = sc(j, "get_LocalRotation")
+            if not local_pos or not lr or not prev_pos or not prev_rot then return nil end
 
-            local rotated = quat_mul_vec(prev_rot, vec3(lp.x, lp.y, lp.z))
+            local rotated = quat_mul_vec(prev_rot, vec3(local_pos.x, local_pos.y, local_pos.z))
             pos = vec3(prev_pos.x + rotated.x, prev_pos.y + rotated.y, prev_pos.z + rotated.z)
             rot = quat_mul(prev_rot, lr)
 
         else
-            -- 其他骨骼：位移用 JSON local_offset（过滤 mod 注入的额外偏移）
-            --           旋转用 get_LocalRotation()（直接乘，不再额外引入 rest_rot）
+            -- 所有非 root、非 Hip 骨骼：位移用 JSON local_offset
             local bdata = skel.bones[bname]
             local off = bdata and bdata.local_offset
             local lr  = sc(j, "get_LocalRotation")
@@ -556,46 +558,59 @@ local function fk_wep_world_pos(char, side)
             pos = vec3(prev_pos.x + rotated.x, prev_pos.y + rotated.y, prev_pos.z + rotated.z)
             rot = quat_mul(prev_rot, lr)
         end
+        
+        if bname == side .. "_Hand" then
+            hand_pos = pos
+        end
 
         prev_pos, prev_rot = pos, rot
     end
 
-    -- 通过 Hand 计算 Wep 坐标（仍用 JSON local_offset）
-    local wep_bname = side .. "_Wep"
-    local wdata = skel.bones[wep_bname]
-    if not wdata or not wdata.local_offset or not prev_pos or not prev_rot then return nil end
-    local off = wdata.local_offset
-    local rotated = quat_mul_vec(prev_rot, vec3(off[1], off[2], off[3]))
-    return vec3(prev_pos.x + rotated.x, prev_pos.y + rotated.y, prev_pos.z + rotated.z)
+    -- 链的最后一个元素已经是 Wep，所以 prev_pos 就是 Wep 的坐标，不用再次叠加 Wep offset
+    return prev_pos, hand_pos, prev_rot
 end
 
 
+-- 精确计算 wep_joint 相对 hand_joint 的局部偏移
+-- 直接用世界坐标差 + 逆旋转，自动包含所有中间骨骼，精度最高
+-- 每个角色独立调用，互不干扰
 local function get_char_joints(char)
     local entry = _char_joints_cache[char.transform]
     if entry then return entry end
+
     local skel = SKEL_REST[char.mapped_name]
-    -- NATIVE_OFFSET: 就是 SKEL_REST 里 R_Wep 和 L_Wep 的 local_offset（即 R_Hand -> R_Wep 的静止姿势局部偏移）
-    local r_native = skel and skel.bones and skel.bones["R_Wep"] and skel.bones["R_Wep"].local_offset or {0,0,0}
-    local l_native = skel and skel.bones and skel.bones["L_Wep"] and skel.bones["L_Wep"].local_offset or {0,0,0}
+    
+    local r_native = {0,0,0}
+    if skel and skel.bones and skel.bones["R_Wep"] and skel.bones["R_Wep"].local_offset then
+        local fb = skel.bones["R_Wep"].local_offset
+        r_native = { x=fb[1], y=fb[2], z=fb[3] }
+    end
+
+    local l_native = {0,0,0}
+    if skel and skel.bones and skel.bones["L_Wep"] and skel.bones["L_Wep"].local_offset then
+        local fb = skel.bones["L_Wep"].local_offset
+        l_native = { x=fb[1], y=fb[2], z=fb[3] }
+    end
+
     entry = {
         {
             name = "R_Wep", wep_j = char.r_wep_joint, hand_j = char.r_hand_joint,
-            native_off = { x=r_native[1], y=r_native[2], z=r_native[3] },
-            add_off    = char.r_add_offset or {x=0,y=0,z=0}
+            native_off = r_native,
+            add_off    = {x=0,y=0,z=0}
         },
         {
             name = "L_Wep", wep_j = char.l_wep_joint, hand_j = char.l_hand_joint,
-            native_off = { x=l_native[1], y=l_native[2], z=l_native[3] },
-            add_off    = char.l_add_offset or {x=0,y=0,z=0}
+            native_off = l_native,
+            add_off    = {x=0,y=0,z=0}
         }
     }
     _char_joints_cache[char.transform] = entry
     return entry
 end
 
--- ══════════════════════════════════════════════════════════════════
+-- ─────────────────────────────────────────────────────────────────
 -- 逐帧全程诊断录制
--- ══════════════════════════════════════════════════════════════════
+-- ─────────────────────────────────────────────────────────────────
 local function fmt_v(v)
     if not v then return "nil" end
     return string.format("(%.5f,%.5f,%.5f)", v.x, v.y, v.z)
@@ -652,7 +667,7 @@ local function diag_write_frame()
                     local local_rot = j and sc(j, "get_LocalRotation") or nil
                     local local_pos = j and sc(j, "get_LocalPosition") or nil
 
-                    -- FK 累积（与 fk_wep_world_pos 完全一致）
+                    -- FK 积累（与 fk_wep_world_pos 完全一致）
                     local fk_pos, fk_rot = nil, nil
                     if bname == "root" then
                         fk_pos = game_pos
@@ -669,7 +684,6 @@ local function diag_write_frame()
                         if off then
                             local rotated = quat_mul_vec(fk_prev_rot, vec3(off[1], off[2], off[3]))
                             fk_pos = { x = fk_prev_pos.x+rotated.x, y = fk_prev_pos.y+rotated.y, z = fk_prev_pos.z+rotated.z }
-                            -- Wep 骨骼没有真实 joint，local_rot 为 nil，只算位置不传播旋转
                             if local_rot then
                                 fk_rot = quat_mul(fk_prev_rot, local_rot)
                             end
@@ -715,7 +729,7 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
     -- 每帧重置 vec pool
     vec_pool_reset()
 
-    -- ── 基于 UI 状态的 CG 检测 ──────────────────────────────────────
+    -- ── 基于 UI 状态检测 CG ──────────────────────────────────────────────────────────
     local layer_cg_now = check_if_in_cg()
 
     if layer_cg_now then
@@ -766,6 +780,14 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
         diag_write_frame()
     end
 
+    -- 角色 transform 引用失效时：只清除角色缓存重扫（武器缓存保留）
+    if _need_char_rescan then
+        _need_char_rescan = false
+        cached_chars = {}
+        _char_joints_cache = {}
+        full_scene_scan()
+    end
+
     local occupied_hands = {}
 
     local active_accessories = {}
@@ -785,15 +807,27 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
         end
     end
 
-    -- ══ 性能优化：每帧只算一次 FK，缓存到角色上 ══
-    -- ══ 性能优化：每帧只算一次 FK，缓存到角色上 ══
+    -- ╔══ 性能优化：每帧只算一次 FK，缓存到角色 ══╗
+    -- ╚══ 性能优化：每帧只算一次 FK，缓存到角色 ══╝
     for _, char in ipairs(cached_chars) do
-        -- 动态过滤：只计算处于活动 CG 状态的角色
+        -- 动态过滤：只计算处于活跃 CG 状态的角色
         if check_layer_cg(char.go) then
             char._is_active_this_frame = true
-            char._fk_r_wep = fk_wep_world_pos(char, "R")  -- 仅用于距离检测
-            char._fk_l_wep = fk_wep_world_pos(char, "L")
-            -- 持久化复制（vec pool 会在帧末回收）
+            local r_wep_p, r_hand_p, r_hand_r = fk_wep_world_pos(char, "R")
+            local l_wep_p, l_hand_p, l_hand_r = fk_wep_world_pos(char, "L")
+            char._fk_r_wep = r_wep_p
+            char._fk_l_wep = l_wep_p
+            char._fk_r_hand = r_hand_p
+            char._fk_l_hand = l_hand_p
+            char._fk_r_hand_rot = r_hand_r
+            char._fk_l_hand_rot = l_hand_r
+            if char._fk_r_hand then char._fk_r_hand = { x = char._fk_r_hand.x, y = char._fk_r_hand.y, z = char._fk_r_hand.z } end
+            if char._fk_l_hand then char._fk_l_hand = { x = char._fk_l_hand.x, y = char._fk_l_hand.y, z = char._fk_l_hand.z } end
+            if char._fk_r_hand_rot then char._fk_r_hand_rot = { x = char._fk_r_hand_rot.x, y = char._fk_r_hand_rot.y, z = char._fk_r_hand_rot.z, w = char._fk_r_hand_rot.w } end
+            if char._fk_l_hand_rot then char._fk_l_hand_rot = { x = char._fk_l_hand_rot.x, y = char._fk_l_hand_rot.y, z = char._fk_l_hand_rot.z, w = char._fk_l_hand_rot.w } end
+            --  仅用于距离检测
+            --
+            -- 持久化拷贝（vec pool 会在帧末回收）
             if char._fk_r_wep then char._fk_r_wep = { x = char._fk_r_wep.x, y = char._fk_r_wep.y, z = char._fk_r_wep.z } end
             if char._fk_l_wep then char._fk_l_wep = { x = char._fk_l_wep.x, y = char._fk_l_wep.y, z = char._fk_l_wep.z } end
         else
@@ -804,13 +838,14 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
             char.calc_r_wep_pos = nil
         end
     end
+-- ─────────────────────────────────────────────────────────────────
     for _, wep in ipairs(cached_weapons) do
         wep.dist_to_fk = -1 -- 重置
         if wep._special_snap then
             -- 跳过普通吸附
         else
             pcall(function()
-                if sc(wep.go, "get_Valid") then
+                if sc(wep.go, "get_Valid") and sc(wep.go, "get_DrawSelf") == true then
                     local j0 = wep.j0
                     local j1 = wep.j1
                     local p0 = j0 and sc(j0, "get_Position")
@@ -819,8 +854,10 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
                     if not p0 and not p1 then p0 = sc(wep.transform, "get_Position") end
 
                     if p0 or p1 then
+                        -- 默认距离阈值
                         local best_dist = SNAP_THRESHOLD
                         local target_char, target_snap_joint, target_wep_joint_name = nil, nil, nil
+                        local best_pure_pos = nil   -- FK 预测武器位置，用于 is_extra 无骨骼时备用吸附
                         wep._best_cp = nil
 
                         for _, char in ipairs(cached_chars) do
@@ -830,6 +867,7 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
 
                             char.calc_l_wep_pos = nil
                             char.calc_r_wep_pos = nil
+
 
                             for _, j_info in ipairs(joints) do
                                 local hand_key = get_hand_key(char.name, j_info.name)
@@ -841,8 +879,9 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
                                     if not fk_wep_pos then goto continue_joint end
 
                                     local pure_pos = vec3(fk_wep_pos.x, fk_wep_pos.y, fk_wep_pos.z)
-
-                                    -- 吸附目标：优先用游戏内 R_Wep/L_Wep 关节；FK 算出来的才是用于距离判断的
+                                    
+                                    -- 新增：提前计算 target_pos 以防止投影点在暂停时滑动
+                                     local target_pos_vec3 = vec3(pure_pos.x, pure_pos.y, pure_pos.z)
                                     local snap_pos = sc(j_info.wep_j, "get_Position") or pure_pos
 
                                     if j_info.name == "L_Wep" then char.calc_l_wep_pos = { x = snap_pos.x, y = snap_pos.y, z = snap_pos.z } end
@@ -863,10 +902,6 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
                                                 local cp, _ = closest_point_on_segment(snap_pos, seg_a, seg_b)
 
                                                 local effective_dist = dist
-                                                if j_info.name == "R_Wep" then
-                                                    effective_dist = effective_dist - RIGHT_HAND_BIAS
-                                                end
-
                                                 best_for_char = effective_dist
                                                 best_j_for_char = wep.j0
                                                 best_cp = cp
@@ -878,13 +913,29 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
                                             if wep.is_extra then
                                                 -- 列表物体的逻辑
                                                 if wep.has_custom_joint then
-                                                    -- 如果列表里明确写了骨骼名，则【只检测】该骨骼
-                                                    if wep.j_extra then
-                                                        local pf = sc(wep.j_extra, "get_Position")
-                                                        if pf then
-                                                            best_for_char = math.sqrt((pf.x-pure_pos.x)^2+(pf.y-pure_pos.y)^2+(pf.z-pure_pos.z)^2)
-                                                            best_j_for_char = wep.j_extra
+                                                    -- 动态重试（骨骼可能在初始化后刷新导致引用失效）
+                                                    if wep.j_extra and not sc(wep.j_extra, "get_Position") then
+                                                        wep.j_extra = nil
+                                                    end
+                                                    if not wep.j_extra and wep.custom_joint_name then
+                                                        wep.j_extra = sc(wep.transform, "getJointByName", wep.custom_joint_name)
+                                                    end
+                                                    local j_check = wep.j_extra or wep.j0
+                                                    local pf = j_check and sc(j_check, "get_Position") or p0
+                                                    if pf then
+                                                        local off = wep.j_extra_local_off
+                                                        local pfx, pfy, pfz = pf.x, pf.y, pf.z
+                                                        if off and (off[1] ~= 0 or off[2] ~= 0 or off[3] ~= 0) and j_check then
+                                                            local rf = sc(j_check, "get_Rotation")
+                                                            if rf then
+                                                                local woff = quat_mul_vec(rf, vec3(off[1], off[2], off[3]))
+                                                                pfx = pfx + woff.x
+                                                                pfy = pfy + woff.y
+                                                                pfz = pfz + woff.z
+                                                            end
                                                         end
+                                                        best_for_char = math.sqrt((pfx-pure_pos.x)^2+(pfy-pure_pos.y)^2+(pfz-pure_pos.z)^2)
+                                                        best_j_for_char = j_check or j0
                                                     end
                                                 else
                                                     -- 只有没写骨骼名时，才退而求其次吸附第一根骨骼 (j0)
@@ -904,6 +955,11 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
                                             end
                                         end
 
+                                        -- 统一在这里扣除 RIGHT_HAND_BIAS，确保对所有武器（含物品/普通武器）都生效
+                                        if j_info.name == "R_Wep" and best_for_char ~= 99999 then
+                                            best_for_char = best_for_char - RIGHT_HAND_BIAS
+                                        end
+
                                         -- 记录到 FK 的最小距离（用于 UI 显示，忽略阈值限制）
                                         if wep.dist_to_fk == -1 or best_for_char < wep.dist_to_fk then
                                             wep.dist_to_fk = best_for_char
@@ -915,20 +971,7 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
                                             target_snap_joint = j_info.wep_j
                                             target_wep_joint_name = j_info.name
                                             wep.active_joint = best_j_for_char
-                                            -- best_cp 来自 vec pool，需要持久化
-                                            if best_cp then
-                                                wep._best_cp = { x = best_cp.x, y = best_cp.y, z = best_cp.z }
-                                            else
-                                                wep._best_cp = nil
-                                            end
-                                        end
-
-                                        if best_for_char < best_dist then
-                                            best_dist = best_for_char
-                                            target_char = char
-                                            target_snap_joint = j_info.wep_j
-                                            target_wep_joint_name = j_info.name
-                                            wep.active_joint = best_j_for_char
+                                            best_pure_pos = pure_pos  -- 保存 FK 预测位置（is_extra 无骨骼时用于直接吸附）
                                             -- best_cp 来自 vec pool，需要持久化
                                             if best_cp then
                                                 wep._best_cp = { x = best_cp.x, y = best_cp.y, z = best_cp.z }
@@ -949,7 +992,36 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
                             occupied_hands[hand_key] = true
 
                             local is_right = (target_wep_joint_name == "R_Wep")
+
+                            -- 动态补充：扫描时骨骼可能未初始化，在此处重试
+                            if not target_char.r_hand_joint then
+                                target_char.r_hand_joint = sc(target_char.transform, "getJointByName", "R_Arm_Hand") or sc(target_char.transform, "getJointByName", "R_Hand")
+                            end
+                            if not target_char.l_hand_joint then
+                                target_char.l_hand_joint = sc(target_char.transform, "getJointByName", "L_Arm_Hand") or sc(target_char.transform, "getJointByName", "L_Hand")
+                            end
+                            if not target_char.r_wep_joint then
+                                target_char.r_wep_joint = sc(target_char.transform, "getJointByName", "R_Wep")
+                                -- 同步更新 _char_joints_cache
+                                local cj = _char_joints_cache[target_char.transform]
+                                if cj then for _, ji in ipairs(cj) do if ji.name == "R_Wep" then ji.wep_j = target_char.r_wep_joint end end end
+                            end
+                            if not target_char.l_wep_joint then
+                                target_char.l_wep_joint = sc(target_char.transform, "getJointByName", "L_Wep")
+                                local cj = _char_joints_cache[target_char.transform]
+                                if cj then for _, ji in ipairs(cj) do if ji.name == "L_Wep" then ji.wep_j = target_char.l_wep_joint end end end
+                            end
+
                             local hand_joint = is_right and target_char.r_hand_joint or target_char.l_hand_joint
+
+                            if not hand_joint and wep.is_extra and best_pure_pos then
+                                -- is_extra 物品无法获取手部骨骼（子对象没有直接骨骼）
+                                -- 直接将 transform 吸附到 FK 预测的武器位置
+                                pcall(function()
+                                    wep.transform:call("set_Position", Vector3f.new(best_pure_pos.x, best_pure_pos.y, best_pure_pos.z))
+                                end)
+                                wep.snapped_to = target_char.name .. " (via FK pos)"
+                            end
 
                             if hand_joint then
                                 local p_hand = hand_joint:call("get_Position")
@@ -966,7 +1038,39 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
                                     if j_info_snap then
                                         local n = j_info_snap.native_off
                                         local a = j_info_snap.add_off
-                                        local combined = vec3(n.x + a.x, n.y + a.y, n.z + a.z)
+                                        
+                                        -- 【核心修复】计算 R_Wep 的父级与 R_Hand 的世界坐标偏移
+                                        local dx, dy, dz = 0, 0, 0
+                                        if j_info_snap.wep_j then
+                                            local pcall_ok, p_j = pcall(function() return j_info_snap.wep_j:call("get_Parent") end)
+                                            if pcall_ok and p_j then
+                                                -- 检查父骨骼是否就是手部骨骼
+                                                local is_same = false
+                                                pcall(function() 
+                                                    if p_j:call("get_Name") == hand_joint:call("get_Name") then is_same = true end
+                                                end)
+                                                
+                                                if not is_same then
+                                                    local ok_pp, p_parent = pcall(function() return p_j:call("get_Position") end)
+                                                    if ok_pp and p_parent then
+                                                        -- 计算父级骨骼与手的绝对世界偏差
+                                                        dx = p_parent.x - p_hand.x
+                                                        dy = p_parent.y - p_hand.y
+                                                        dz = p_parent.z - p_hand.z
+                                                    end
+                                                end
+                                            end
+                                        end
+
+                                        -- 转换手部的旋转为逆四元数
+                                        local inv_r_hand = { x = -r_hand.x, y = -r_hand.y, z = -r_hand.z, w = r_hand.w }
+                                        -- 将纯位移差值旋转到手的本地坐标系中，这就是“父级与手的相对偏移”
+                                        local parent_off_local = quat_mul_vec(inv_r_hand, vec3(dx, dy, dz))
+
+                                        -- 最终局部坐标 = JSON(n) + AddOffset(a) + 父级相对手的动态偏移(parent_off_local)
+                                        local combined = vec3(n.x + a.x + parent_off_local.x, n.y + a.y + parent_off_local.y, n.z + a.z + parent_off_local.z)
+                                        
+                                        -- 重新把最终局部坐标旋转回世界坐标
                                         local r = { x = r_hand.x, y = r_hand.y, z = r_hand.z, w = r_hand.w }
                                         local rotated = quat_mul_vec(r, combined)
                                         target_pos = Vector3f.new(p_hand.x + rotated.x, p_hand.y + rotated.y, p_hand.z + rotated.z)
@@ -975,11 +1079,31 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
                                     end
 
                                     local active_joint = wep.active_joint
+                                    if active_joint and not sc(active_joint, "get_Position") then
+                                        active_joint = nil
+                                    end
                                     if not active_joint then
                                         pcall(function()
                                             local joints = wep.transform:call("get_Joints")
                                             if joints then active_joint = joints[0] end
                                         end)
+                                    end
+
+                                    -- 【j_extra_local_off 修正】
+                                    -- 如果配置了局部偏移，target_pos 是"手应该在的位置"，
+                                    -- 但 active_joint（_00）需要停在 target_pos - 偏移(世界坐标)，
+                                    -- 这样 _00 + 偏移 才正好落在手上。
+                                    local off = wep.j_extra_local_off
+                                    if off and (off[1] ~= 0 or off[2] ~= 0 or off[3] ~= 0) and active_joint then
+                                        local rf = sc(active_joint, "get_Rotation")
+                                        if rf then
+                                            local woff = quat_mul_vec(rf, vec3(off[1], off[2], off[3]))
+                                            target_pos = Vector3f.new(
+                                                target_pos.x - woff.x,
+                                                target_pos.y - woff.y,
+                                                target_pos.z - woff.z
+                                            )
+                                        end
                                     end
 
                                     if active_joint then
