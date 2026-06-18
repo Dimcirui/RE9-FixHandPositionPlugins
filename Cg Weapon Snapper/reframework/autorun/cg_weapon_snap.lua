@@ -739,7 +739,7 @@ re.on_pre_application_entry("LateUpdateBehavior", function()
             -- 跳过普通吸附
         else
             pcall(function()
-                if sc(wep.go, "get_Valid") then
+                if sc(wep.go, "get_Valid") and sc(wep.go, "get_DrawSelf") == true then
                     local j0 = wep.j0
                     local j1 = wep.j1
                     local p0 = j0 and sc(j0, "get_Position")
@@ -1091,7 +1091,8 @@ re.on_draw_ui(function()
                     if p then w_pos = string.format("(%.2f, %.2f, %.2f)", p.x, p.y, p.z) end
 
                     local valid = sc(wep.go, "get_Valid")
-                    local status_text = "[V:" .. ((valid == nil) and "nil" or tostring(valid)) .. "]"
+                    local draw = sc(wep.go, "get_DrawSelf")
+                    local status_text = string.format("[V:%s D:%s]", tostring(valid), tostring(draw))
 
                     local parent_name = "None"
                     local p_t = sc(wep.transform, "get_Parent")
